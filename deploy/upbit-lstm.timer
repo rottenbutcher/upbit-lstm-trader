@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Upbit bot 15 seconds after each five-minute boundary
+
+[Timer]
+OnCalendar=*-*-* *:0/5:15 UTC
+AccuracySec=1s
+Persistent=false
+Unit=upbit-lstm.service
+
+[Install]
+WantedBy=timers.target
