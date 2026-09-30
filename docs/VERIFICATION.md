@@ -9,4 +9,5 @@
 - PyTorch legacy ONNX exporter가 deprecated/tracer 경고를 출력하지만, 고정 길이 입력에 대해 실제 batch 1/5의 결과 일치를 확인합니다. 배포에 쓰는 PyTorch 2.7.1 버전 호환성을 위해 legacy export를 명시합니다.
 - RTX 5060 8GB 데스크톱의 학습, 전체 실제 역사 수집/학습, Oracle VM 설치, 계정 키를 사용한 실제 주문은 제작 과정에서 실행하지 않았습니다.
 - 제작 PC에서 Upbit 공개 API 연결을 시도했으나 TLS 연결 시간이 초과되었습니다. 실제 API 연결은 사용자 학습 PC/서버에서 확인해야 합니다. 네트워크 검증을 통과한 것으로 표기하지 않습니다.
-- 저장소 CI는 Ubuntu 24.04/Python 3.12/PyTorch 2.7.1 CPU를 별도로 검증하도록 구성했습니다. CI 상태는 GitHub Actions에서 확인할 수 있습니다.
+- Ubuntu 24.04/Python 3.12/PyTorch 2.7.1 CPU의 GitHub Actions에서도 설치·정적 검사·28개 테스트가 통과했습니다. [첫 검증 실행](https://github.com/rottenbutcher/upbit-lstm-trader/actions/runs/36658799113).
+- 설치 로그에서 기존 NumPy 2.4.0 배포의 호환성 문제 회수 표시를 발견해, 사용자용 의존성은 회수되지 않은 NumPy 2.4.4로 수정했습니다. 최신 커밋의 CI 상태는 [Actions](https://github.com/rottenbutcher/upbit-lstm-trader/actions)에서 확인할 수 있습니다.
