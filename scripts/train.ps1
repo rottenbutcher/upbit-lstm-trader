@@ -1,4 +1,4 @@
-param([switch]$Resume, [switch]$AllowCpu, [string]$TorchIndex = 'https://download.pytorch.org/whl/cu128')
+param([switch]$Resume, [switch]$AllowCpu, [switch]$Hmm, [string]$TorchIndex = 'https://download.pytorch.org/whl/cu128')
 $ErrorActionPreference = 'Stop'
 $ProjectDir = Split-Path $PSScriptRoot -Parent
 Set-Location -LiteralPath $ProjectDir
@@ -25,6 +25,24 @@ $PythonPath = Join-Path $ProjectDir '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $PythonPath)) {
     & $UvPath venv --python 3.12 .venv
     if ($LASTEXITCODE -ne 0) { throw 'Python environment creation failed' }
+}
+if ($Hmm) {
+    & $UvPath pip install --python $PythonPath -r requirements-runtime.txt -e '.[hmm]'
+    if ($LASTEXITCODE -ne 0) { throw 'HMM dependency installation failed' }
+    $HmmArgs = @('-m', 'upbit_bot.cli', 'train-hmm')
+    if (Test-Path -LiteralPath (Join-Path $ProjectDir 'artifacts\manifest.json')) {
+        Write-Host 'Comparing with saved LSTM on its original dates and saved candles. No download.'
+        $HmmArgs += @('--compare-lstm', 'artifacts')
+    } else {
+        Write-Host 'No LSTM bundle found: HMM-only research. Run TRAIN.cmd, then HMM.cmd for comparison.'
+        & $PythonPath -m upbit_bot.cli download
+        if ($LASTEXITCODE -ne 0) { throw 'Download failed; HMM.cmd can resume it.' }
+    }
+    & $PythonPath @HmmArgs
+    if ($LASTEXITCODE -ne 0) { throw 'HMM research failed. Review the error above.' }
+    Write-Host 'DONE: artifacts\hmm\comparison.html' -ForegroundColor Green
+    Start-Process -FilePath (Join-Path $ProjectDir 'artifacts\hmm\comparison.html')
+    exit 0
 }
 if ($AllowCpu) { $TorchIndex = 'https://download.pytorch.org/whl/cpu' }
 & $UvPath pip install --python $PythonPath --index-url $TorchIndex 'torch==2.7.1'

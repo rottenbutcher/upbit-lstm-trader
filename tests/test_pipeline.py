@@ -1,6 +1,7 @@
 """Small synthetic end-to-end verification. Never interpreted as trading performance."""
 
 import copy
+import importlib.util
 import zipfile
 
 import numpy as np
@@ -41,6 +42,27 @@ def test_train_export_and_package(tmp_path):
         assert "requirements-runtime.txt" in names
         assert "deploy/install.sh" in names
         assert not any("checkpoint" in n or n == ".env" or "sqlite" in n for n in names)
+    if importlib.util.find_spec("hmmlearn"):
+        import pandas as pd
+
+        from upbit_bot.hmm_research import train_hmm
+
+        cfg["hmm"].update(iterations=4, restarts=1, max_fit_rows=400, block_size=100)
+        comparison_dir = out / "hmm"
+        comparison = train_hmm(cfg, directory, comparison_dir, out)
+        assert comparison["snapshot_verified_against_lstm"]
+        assert comparison["lstm_model_sha256"] == manifest["model_sha256"]
+        assert set(comparison["results"]) == {"HMM", "LSTM"}
+        for split in ("val", "test"):
+            hmm = pd.read_csv(comparison_dir / f"hmm_{split}_predictions.csv")
+            lstm = pd.read_csv(comparison_dir / f"lstm_{split}_predictions.csv")
+            pd.testing.assert_frame_equal(
+                hmm.drop(columns="prediction_bps"), lstm.drop(columns="prediction_bps")
+            )
+            # The new evaluator reproduces the original LSTM forecast on the same data.
+            actual = comparison["results"]["LSTM"]["forecast"][split]
+            original = bundle.report["forecast"][split]
+            assert abs(actual["mae_bps"] - original["mae_bps"]) < 0.01
     # Mismatched model bytes must fail before any inference/order.
     with (out / "model.onnx").open("ab") as f:
         f.write(b"tampered")

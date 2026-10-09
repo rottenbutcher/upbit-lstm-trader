@@ -11,6 +11,16 @@ hidden = 64
 layers = 2
 dropout = 0.15
 
+[hmm]
+states = 3
+iterations = 40
+restarts = 2
+tolerance = 0.01
+max_fit_rows = 60000
+block_size = 2048
+shrinkage = 100.0
+threads = 4
+
 [training]
 seed = 42
 epochs = 12

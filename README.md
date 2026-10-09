@@ -18,6 +18,29 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\train.ps1
 
 학습 중단 시 **`RESUME.cmd`**로 마지막 완료 epoch부터 이어갑니다. 다운로드 중단은 `TRAIN.cmd`를 다시 실행하세요. `RESUME.cmd`는 데이터를 갱신하지 않습니다. 설정이나 데이터가 바뀌면 이전 체크포인트를 재개할 수 없으므로 새 `TRAIN.cmd` 실행이 필요합니다. 재학습 전 기존 `artifacts` 폴더는 별도 보관하세요.
 
+### HMM 정확도 비교 — `HMM.cmd` 더블클릭
+
+**LSTM 학습이 끝난 같은 폴더에서 `HMM.cmd`를 실행**하면, 종목별 Gaussian Hidden Markov Model(HMM)을 CPU로 학습하고 **`artifacts/hmm/comparison.html`**을 자동으로 엽니다. 추가 GPU 메모리는 사용하지 않습니다. 저장소를 새로 다운로드했다면 기존 `data`와 `artifacts` 폴더를 함께 가져오세요. 소스 업데이트 때 이 폴더를 삭제할 필요는 없습니다.
+
+- LSTM과 **같은 종목·검증/테스트 날짜·예측 대상 봉**에서 방향 정확도, 균형 정확도, 평균 절대 오차(MAE)를 비교합니다. 항상 상승·학습 구간 다수 방향·수익률 0 예측 기준도 표시합니다.
+- 같은 자금·수수료·슬리피지·위험 제한으로 수익률, 최대 낙폭, 거래 수를 비교합니다. 모델마다 매수 기준은 검증 구간에서만 선택합니다.
+- LSTM 파일이 있으면 데이터를 갱신하거나 LSTM을 재학습하지 않고 저장된 날짜로 비교합니다. 앞으로 생성하는 LSTM에는 원본 봉 해시를 기록해 데이터 변경도 탐지합니다. 이전 모델은 해시가 없어 보고서에 그 한계를 표시합니다.
+- LSTM 파일이 없으면 데이터를 수집해 HMM만 먼저 평가합니다. 이후 `TRAIN.cmd` 완료 후 `HMM.cmd`를 다시 실행하면 비교 보고서가 생성됩니다.
+- 이 기능은 **HMM 연구·비교**용입니다. Oracle 배포 패키지는 기존 LSTM을 사용합니다. HMM 보고서가 실거래 승인이나 자동 모델 교체를 의미하지 않습니다.
+
+이미 설치된 Python 환경에서 직접 실행하려면(Python 3.12 권장):
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[hmm]"
+.\.venv\Scripts\python.exe -m upbit_bot.cli train-hmm --compare-lstm artifacts
+```
+
+HMM 단독 실행은 `--compare-lstm artifacts`를 생략합니다. 클릭 방식은 필요한 환경을 자동 설치합니다. 상세 결과는 `comparison.json`, 종목/봉별 예측은 `*_predictions.csv`, 거래 내역은 `*_trades.csv`에 저장합니다.
+
+기본값은 **종목별 3개 잠재 상태, 대각 공분산, 초기화 2회, 최대 EM 40회**입니다. 초기값은 학습 구간 우도로 선택하고 테스트는 선택에 사용하지 않습니다. 속도를 위해 전체 학습 기간에서 연속된 5분봉 블록을 고르며, 종목별 최대 60,000봉으로 HMM 분포·전이 확률을 적합합니다. 정규화와 상태별 미래 수익률 대응은 학습 구간만 사용하고, 평가는 미래를 참조하지 않는 forward filtering으로 수행합니다. 상태는 자동으로 특정 의미의 상승/하락/횡보 정답이 되는 것이 아니므로 **상태 분류 정확도가 아닌 미래 수익 방향의 정확도**를 측정합니다.
+
+`config.toml`의 `[hmm]`에서 조정할 수 있습니다. `max_fit_rows=0`이면 모든 유효 학습 봉 블록으로 적합하지만 더 오래 걸립니다. 더 큰 모델이 더 정확하다는 보장은 없으며 실제 비교 수치는 로컬 학습 후 확인할 수 있습니다. [HMM 설계와 검증](docs/HMM.md).
+
 ### 2. Oracle — Ubuntu 24.04 LTS
 
 **홈 리전의 Always Free 표시가 있는 Ampere A1 1 OCPU / 6GB RAM** 인스턴스를 준비합니다. ARM64와 AMD64 모두 지원합니다. GPU는 필요 없습니다. 공인 IP, 인터넷 연결, 본인 IP에 대한 SSH 접속을 설정하세요. 별도 웹서비스 포트는 열지 않습니다.
@@ -108,7 +131,7 @@ sudo bash /opt/upbit-lstm/current/deploy/botctl.sh adopt --market KRW-BTC --quan
 
 ```bash
 python -m pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cpu
-python -m pip install -r requirements-runtime.txt onnx==1.21.0 -e '.[dev]'
+python -m pip install -r requirements-runtime.txt onnx==1.21.0 -e '.[dev,hmm]'
 pytest -q
 ruff check .
 ```

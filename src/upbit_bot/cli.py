@@ -65,6 +65,10 @@ def main():
     p.add_argument("--output", default="artifacts")
     p.add_argument("--resume", action="store_true")
     p.add_argument("--allow-cpu", action="store_true")
+    p = sub.add_parser("train-hmm", help="CPU HMM research and optional frozen LSTM comparison")
+    p.add_argument("--data", default="data")
+    p.add_argument("--output", default="artifacts/hmm")
+    p.add_argument("--compare-lstm", metavar="DIRECTORY")
     p = sub.add_parser("package")
     p.add_argument("--artifacts", default="artifacts")
     p.add_argument("--destination", default="dist/oracle-upload.zip")
@@ -116,6 +120,10 @@ def main():
         from .package import package
 
         print(package(artifacts=args.artifacts, destination=args.destination))
+    elif args.command == "train-hmm":
+        from .hmm_research import train_hmm
+
+        train_hmm(cfg, args.data, args.output, args.compare_lstm)
     elif args.command == "run":
         from .runtime import run
 

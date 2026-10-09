@@ -19,6 +19,7 @@ from .common import read_json, save_json, sha256, utcnow
 from .data import CandleStore
 from .features import FEATURES, feature_frame, model_input, split_indices
 from .model import ReturnLSTM, export_onnx
+from .research import candle_snapshot
 
 LOG = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ def predict(model, dataset, device, batch_size):
 
 def prepare(cfg, directory, output):
     universe = read_json(Path(directory) / "universe.json")
+    universe["data_snapshot"] = {}
     store = CandleStore(directory)
     frames, features = [], []
     try:
@@ -56,6 +58,7 @@ def prepare(cfg, directory, output):
             raw = store.frame(market)
             if raw.empty:
                 raise ValueError(f"No candles for {market}; run download first")
+            universe["data_snapshot"][market] = candle_snapshot(raw)
             frame, feat = feature_frame(raw)
             if (frame.index[-1] - frame.index[0]).days < cfg["data"]["minimum_days"]:
                 raise ValueError(
@@ -367,6 +370,7 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
         "markets": universe["markets"],
         "universe": universe,
         "lookback": mc["lookback"],
+        "data_snapshot": universe["data_snapshot"],
         "horizon": mc["horizon"],
         "scaler": scaler,
         "train_end": train_end.isoformat(),
