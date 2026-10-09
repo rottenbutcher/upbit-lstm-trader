@@ -18,6 +18,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\train.ps1
 
 학습 중단 시 **`RESUME.cmd`**로 마지막 완료 epoch부터 이어갑니다. 다운로드 중단은 `TRAIN.cmd`를 다시 실행하세요. `RESUME.cmd`는 데이터를 갱신하지 않습니다. 설정이나 데이터가 바뀌면 이전 체크포인트를 재개할 수 없으므로 새 `TRAIN.cmd` 실행이 필요합니다. 재학습 전 기존 `artifacts` 폴더는 별도 보관하세요.
 
+### Linux 학습 PC — RTX 5060 8GB
+
+Ubuntu 22.04/24.04의 x86_64 데스크톱 기준입니다. RTX 5060을 지원하는 NVIDIA 드라이버를 설치하고 재부팅한 뒤 `nvidia-smi`에 GPU가 보이는지 확인하세요. [PyTorch 2.7의 Blackwell / CUDA 12.8 지원](https://pytorch.org/blog/pytorch-2-7/)을 이용하며 프로젝트는 PyTorch 2.7.1 + CUDA 12.8 빌드를 설치합니다. 시스템 CUDA Toolkit을 별도로 설치할 필요는 없습니다.
+
+최신 저장소를 받거나 기존 복제본을 업데이트하고, 저장소 폴더 안에서 실행합니다. 저장소가 비공개이므로 GitHub 인증이 필요합니다. ZIP을 받아 압축을 풀어도 됩니다.
+
+```bash
+nvidia-smi
+bash scripts/train.sh check   # 최초 환경 설치 + 실제 GPU LSTM 연산 검사
+bash scripts/train.sh         # 데이터 수집 → GPU LSTM 학습 → 평가 → Oracle ZIP 생성
+bash scripts/train.sh hmm     # CPU HMM 학습 + 저장된 LSTM과 정확도 비교
+```
+
+`check`는 선택 사항이며 기본 학습 명령도 다운로드 전에 같은 GPU 검사를 수행합니다. Python 3.12와 라이브러리는 프로젝트 안에 자동 설치됩니다. 일반 사용자로 실행하고 학습 스크립트에 `sudo`를 붙이지 마세요. `curl` 등이 없으면 `sudo apt-get install curl ca-certificates tar coreutils`로 설치합니다.
+
+학습 중단 후 같은 설정·데이터로 이어가려면 `bash scripts/train.sh resume`을 실행하세요. 다운로드 중단은 기본 명령으로 재실행합니다. 이력/정확도는 `artifacts/report.html`, HMM 비교는 `artifacts/hmm/comparison.html`, Oracle 업로드 파일은 `dist/oracle-upload.zip`입니다. Linux에서는 HTML 파일을 브라우저로 직접 여세요. Windows에서 옮길 때는 `.venv`와 `.tools` 대신 **소스 + `data` + `artifacts`**를 복사합니다.
+
+LSTM은 기존 8GB 설정(배치 256, 혼합 정밀도, 메모리 부족 시 배치 축소)을 사용합니다. HMM은 `hmmlearn`의 CPU 구현이며 GPU로 자동 전환되지 않습니다. GPU 검사 통과는 연산 호환성 확인이고 전체 학습 시간·실측 정확도 보장은 아닙니다.
+
 ### HMM 정확도 비교 — `HMM.cmd` 더블클릭
 
 **LSTM 학습이 끝난 같은 폴더에서 `HMM.cmd`를 실행**하면, 종목별 Gaussian Hidden Markov Model(HMM)을 CPU로 학습하고 **`artifacts/hmm/comparison.html`**을 자동으로 엽니다. 추가 GPU 메모리는 사용하지 않습니다. 저장소를 새로 다운로드했다면 기존 `data`와 `artifacts` 폴더를 함께 가져오세요. 소스 업데이트 때 이 폴더를 삭제할 필요는 없습니다.
