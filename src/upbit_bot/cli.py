@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import os
+import sys
 from pathlib import Path
 
 from filelock import FileLock
@@ -182,9 +183,15 @@ def main():
 
         download(Upbit(interval=cfg["data"]["request_interval"]), cfg, args.data)
     elif args.command == "train":
+        from .resume import ResumeMismatch
         from .train import train
 
-        train(cfg, args.data, args.output, args.resume, args.allow_cpu)
+        try:
+            train(cfg, args.data, args.output, args.resume, args.allow_cpu)
+        except ResumeMismatch as exc:
+            # Exit code 3 lets the GUI offer "restore settings" or "fresh run" instead of a dead end.
+            print(exc, file=sys.stderr)
+            raise SystemExit(3) from None
     elif args.command == "package":
         from .package import package
 

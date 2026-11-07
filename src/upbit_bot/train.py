@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
-import json
 import logging
 import math
 import random
@@ -21,6 +19,8 @@ from .data import CandleStore
 from .features import WARMUP, feature_frame, feature_list, model_input, split_indices
 from .model import Ensemble, ReturnLSTM, export_onnx
 from .research import candle_snapshot
+from .resume import MISMATCH_FILE, ResumeMismatch, changes, identity, write_info
+from .resume import fingerprint as identity_fingerprint
 
 LOG = logging.getLogger(__name__)
 
@@ -170,13 +170,13 @@ def fit_member(member, cfg, ctx, device, out, resume, started):
     amp = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
     train_refs, val_ds, val_y = ctx["train_refs"], ctx["val_ds"], ctx["val_y"]
     arrays, labels = ctx["arrays"], ctx["labels"]
-    fingerprint = hashlib.sha256((ctx["fingerprint"] + f":member{member}").encode()).hexdigest()
-    checkpoint = out / ("checkpoint.pt" if member == 0 else f"checkpoint-{member}.pt")
+    fingerprint = f"{ctx['fingerprint']}:member{member}"
+    checkpoint = checkpoint_path(out, member)
     best, bad, first_epoch, history, best_state = float("inf"), 0, 0, [], None
     if resume and checkpoint.exists():
         ck = torch.load(checkpoint, map_location=device, weights_only=True)
-        if ck["fingerprint"] != fingerprint:
-            raise ValueError("Data/config changed since checkpoint. Start a fresh run without --resume.")
+        if ck.get("fingerprint") != fingerprint:  # check_resume() reports details first
+            raise ResumeMismatch(changes(ck.get("identity"), ctx["identity"]) or [("legacy", None, None, None)])
         model.load_state_dict(ck["model"])
         optimizer.load_state_dict(ck["optimizer"])
         amp.load_state_dict(ck["amp"])
@@ -188,7 +188,9 @@ def fit_member(member, cfg, ctx, device, out, resume, started):
             torch.cuda.set_rng_state_all([r.cpu() for r in ck["cuda_rng"]])
         if ck.get("complete"):
             LOG.info("Ensemble member %d already complete; reusing checkpoint", member + 1)
+            ctx["progress"](member, history)
             return best_state, history
+        LOG.info("Ensemble member %d: resuming after epoch %d", member + 1, first_epoch)
     batch = ctx["batch"]
     for epoch in range(first_epoch, t["epochs"]):
         if bad >= t["patience"]:
@@ -277,21 +279,72 @@ def fit_member(member, cfg, ctx, device, out, resume, started):
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
         else:
             bad += 1
-        save_checkpoint(checkpoint, fingerprint, model, optimizer, amp, best, bad, epoch + 1, history, best_state)
+        save_checkpoint(
+            checkpoint, fingerprint, ctx["identity"], model, optimizer, amp, best, bad, epoch + 1, history, best_state
+        )
         ctx["progress"](member, history)
     if best_state is None:
         raise ValueError("No completed training epoch")
     save_checkpoint(
-        checkpoint, fingerprint, model, optimizer, amp, best, bad, len(history), history, best_state, True
+        checkpoint,
+        fingerprint,
+        ctx["identity"],
+        model,
+        optimizer,
+        amp,
+        best,
+        bad,
+        len(history),
+        history,
+        best_state,
+        True,
     )
     return best_state, history
 
 
-def save_checkpoint(path, fingerprint, model, optimizer, amp, best, bad, epoch, history, best_state, done=False):
+def checkpoint_path(out, member):
+    return Path(out) / ("checkpoint.pt" if member == 0 else f"checkpoint-{member}.pt")
+
+
+def check_resume(out, ident, members):
+    """Fail before any training if an existing checkpoint belongs to other data/settings.
+
+    Every reason is collected and also written to resume-mismatch.json for the GUI.
+    """
+    found = []
+    for member in range(members):
+        path = checkpoint_path(out, member)
+        if path.exists():
+            ck = torch.load(path, map_location="cpu", weights_only=True)
+            for change in changes(ck.get("identity"), ident):
+                if change not in found:
+                    found.append(change)
+    if found:
+        save_json(out / MISMATCH_FILE, {"changes": [list(c) for c in found], "at": utcnow().isoformat()})
+        raise ResumeMismatch(found)
+
+
+def archive_checkpoints(out):
+    """A fresh run keeps old checkpoints (never deletes) but moves them out of the resume path."""
+    old = sorted(Path(out).glob("checkpoint*.pt"))
+    if not old:
+        return None
+    target = Path(out) / "old-checkpoints" / utcnow().strftime("%Y%m%dT%H%M%SZ")
+    target.mkdir(parents=True, exist_ok=True)
+    for path in old:
+        path.replace(target / path.name)
+    LOG.info("Fresh run: previous checkpoints moved to %s", target)
+    return target
+
+
+def save_checkpoint(
+    path, fingerprint, ident, model, optimizer, amp, best, bad, epoch, history, best_state, done=False
+):
     temp = path.with_suffix(".tmp")
     torch.save(
         {
             "fingerprint": fingerprint,
+            "identity": ident,
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
             "amp": amp.state_dict(),
@@ -325,23 +378,18 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
         torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
     started = time.monotonic()
+    (out / MISMATCH_FILE).unlink(missing_ok=True)
     universe, frames, splits, scaler, arrays, labels, train_end, val_end = prepare(cfg, directory, out)
+    ident = identity(cfg, universe["markets"], universe["data_snapshot"])
+    if resume:
+        check_resume(out, ident, ms["ensemble"])
+    else:
+        archive_checkpoints(out)
+    write_info(out, ident)
     inputs = len(scaler["features"]) + len(frames)
     train_refs = references(splits, "train", t["stride"])
     val_refs = references(splits, "val")
     val_small = val_refs[np.linspace(0, len(val_refs) - 1, min(8192, len(val_refs))).astype(int)]
-    fingerprint = hashlib.sha256(
-        json.dumps(
-            {
-                "cfg": cfg,
-                "universe": universe,
-                "scaler": scaler,
-                "last": [f.index[-1].isoformat() for f in frames],
-                "counts": [len(f) for f in frames],
-            },
-            sort_keys=True,
-        ).encode()
-    ).hexdigest()
     progress_path = out / "progress.json"
     progress_path.unlink(missing_ok=True)
 
@@ -364,7 +412,8 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
         "val_y": np.array([labels[c][i] for c, i in val_small]),
         "arrays": arrays,
         "labels": labels,
-        "fingerprint": fingerprint,
+        "fingerprint": identity_fingerprint(ident),
+        "identity": ident,
         "batch": t["batch_size"],
         "members": ms["ensemble"],
         "progress": progress,

@@ -69,10 +69,11 @@
 <tr>
 <td width="50%" valign="top">
 
-### 🖥️ One-Click Training GUI
-- Pick a preset → save settings → train, all in one window
-- Every setting is explained and validated before saving
-- Live log and progress bar; resume after interruption
+### 🖥️ Training Dashboard
+- Dark-themed dashboard: presets, explained settings, one-click training
+- **Live learning curves** per ensemble model, progress and time remaining
+- **Backtest equity chart** and a results card grid after each run
+- Smart resume: tells you exactly which setting changed and fixes it in one click
 
 </td>
 <td width="50%" valign="top">
@@ -145,12 +146,14 @@ On first launch, Python and the training libraries are installed automatically i
 
 | Step | What to do |
 |:---:|---|
-| **1** | Pick a preset (Quick check / Balanced (recommended) / High performance) and click **Apply** |
-| **2** | Adjust values in each tab if needed, then click **Save settings** |
-| **3** | Click **① Download + Train + Package** |
-| **4** | When finished, click **Open report** to review the results |
+| **1** | Click a preset card: Quick check / Balanced (recommended) / High performance |
+| **2** | Adjust values in each tab if needed (hover a field for its explanation) |
+| **3** | Click **▶ Start training**. Settings are validated and saved automatically |
+| **4** | Watch the **learning curves**; afterwards check the **backtest equity** and **results** tabs |
 
-The output is `dist/oracle-upload.zip`, which you upload to the server. Without a GPU, tick **CPU mode** (training takes longer).
+The output is `dist/oracle-upload.zip`, which you upload to the server. Without a GPU, tick **CPU mode** (the dashboard turns it on automatically when no GPU is found).
+
+**Resuming.** After a stop or crash, **Resume** continues from the last finished epoch and reuses finished ensemble models. You can safely change epochs, ensemble size, strategy, approval and capital settings between runs. If a setting that defines the model changed, the dashboard lists each one (old → new) and offers to restore it and resume, or to start over with the saved data. Old checkpoints are moved to `artifacts/old-checkpoints/`, never deleted.
 
 > [!NOTE]
 > The GUI labels are currently in Korean. The English names above match the buttons in order.
