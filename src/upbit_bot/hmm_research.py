@@ -10,7 +10,7 @@ import pandas as pd
 
 from .common import read_json, save_json, utcnow
 from .data import CandleStore
-from .features import feature_frame, model_input, split_indices
+from .features import WARMUP, feature_frame, model_input, split_indices
 from .hmm_model import HMM_FEATURES, fit_forecaster, settings
 from .research import candle_snapshot, evaluate_forecasts
 
@@ -20,6 +20,8 @@ LOG = logging.getLogger(__name__)
 def load_dataset(cfg, directory, manifest=None):
     universe = manifest["universe"] if manifest else read_json(Path(directory) / "universe.json")
     markets = universe["markets"]
+    # Same feature definitions as the LSTM being compared (older bundles use version 1).
+    version = int(manifest.get("feature_version", 1)) if manifest else int(cfg["model"].get("feature_version", 1))
     frames, features, snapshots = [], [], {}
     store = CandleStore(directory)
     try:
@@ -37,7 +39,7 @@ def load_dataset(cfg, directory, manifest=None):
                 raise ValueError(
                     f"{market}: data differs from the LSTM training snapshot; restore original data"
                 )
-            frame, feat = feature_frame(raw)
+            frame, feat = feature_frame(raw, version)
             if (frame.index[-1] - frame.index[0]).days < cfg["data"]["minimum_days"]:
                 raise ValueError(f"{market}: fewer than minimum_days")
             frames.append(frame)
@@ -57,7 +59,9 @@ def load_dataset(cfg, directory, manifest=None):
     splits, labels = [], []
     horizon = cfg["model"]["horizon"]
     for frame, feat in zip(frames, features):
-        split = split_indices(frame, feat, cfg["model"]["lookback"], horizon, train_end, val_end)
+        split = split_indices(
+            frame, feat, cfg["model"]["lookback"], horizon, train_end, val_end, warmup=WARMUP[version]
+        )
         if any(len(indexes) < 50 for indexes in split.values()):
             raise ValueError("Insufficient history in a time split (minimum 50 samples)")
         splits.append(split)

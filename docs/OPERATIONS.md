@@ -10,6 +10,10 @@ sudo bash /opt/upbit-lstm/current/deploy/botctl.sh status
 
 `health.json`은 마지막 결과, 예측, 봇 소유 수량과 시각을 기록합니다. `status`는 기록이 11분 이상 오래됐는지도 표시합니다. 별도 외부 알림 서비스가 없으므로 서버 회수/완전 정지는 외부에서 확인해야 합니다. 무료 VM은 항상 켜져 있다는 보장이 없습니다.
 
+## LLM 일일 정책
+
+`sudo bash /opt/upbit-lstm/current/deploy/configure-llm.sh`로 키를 등록하면 매일 09:20 KST에 파라미터가 갱신됩니다. 확인은 `botctl.sh policy-show`로 합니다. 즉시 신규 매수를 막으려면 `botctl.sh policy-set --set allow_new_entries=false --confirm`을 실행합니다(매도·손절은 계속). 자세한 내용은 [LLM_POLICY.md](LLM_POLICY.md)를 보세요. LLM이나 데이터 수집이 실패해도 매매는 멈추지 않고, 정책 만료 후 검증된 기준값으로 돌아갑니다.
+
 ## 즉시 중지 / 모의매매 복귀
 
 ```bash

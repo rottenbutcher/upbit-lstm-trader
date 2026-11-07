@@ -6,10 +6,18 @@ from pathlib import Path
 
 from upbit_bot.cli import main
 
-for line in Path("/etc/upbit-lstm.env").read_text().splitlines():
-    key, sep, value = line.partition("=")
-    if sep and key in {"MODE", "LIVE_ACK", "UPBIT_ACCESS_KEY", "UPBIT_SECRET_KEY"}:
-        os.environ[key] = value
+ALLOWED = {
+    "/etc/upbit-lstm.env": {"MODE", "LIVE_ACK", "UPBIT_ACCESS_KEY", "UPBIT_SECRET_KEY"},
+    "/etc/upbit-lstm-llm.env": {"ANTHROPIC_API_KEY", "OPENAI_API_KEY"},
+}
+for name, keys in ALLOWED.items():
+    path = Path(name)
+    if not path.exists():
+        continue
+    for line in path.read_text().splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key in keys:
+            os.environ[key] = value
 
 if len(sys.argv) < 2:
     sys.argv.append("status")

@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily LLM parameter policy update (00:20 UTC = 09:20 KST)
+
+[Timer]
+OnCalendar=*-*-* 00:20:00 UTC
+RandomizedDelaySec=120
+# Run once after boot if the daily slot was missed; the policy is valid for 36 hours.
+Persistent=true
+Unit=upbit-lstm-policy.service
+
+[Install]
+WantedBy=timers.target

@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import logging
+import math
 import random
 import time
 from itertools import pairwise
@@ -17,8 +18,8 @@ from torch.utils.data import DataLoader, Dataset
 from .backtest import buy_hold, passed, simulate
 from .common import read_json, save_json, sha256, utcnow
 from .data import CandleStore
-from .features import FEATURES, feature_frame, model_input, split_indices
-from .model import ReturnLSTM, export_onnx
+from .features import WARMUP, feature_frame, feature_list, model_input, split_indices
+from .model import Ensemble, ReturnLSTM, export_onnx
 from .research import candle_snapshot
 
 LOG = logging.getLogger(__name__)
@@ -44,11 +45,26 @@ def predict(model, dataset, device, batch_size):
     model.eval()
     with torch.inference_mode():
         for x, _ in DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0):
-            out.append(model(x.to(device)).float().cpu().numpy())
+            y = model(x.to(device))
+            if isinstance(y, tuple):
+                y = y[0]
+            out.append(y.float().cpu().numpy())
     return np.concatenate(out) if out else np.array([], dtype=np.float32)
 
 
+def model_settings(cfg):
+    """Model options with defaults that keep older config files valid."""
+    mc = cfg["model"]
+    return {
+        "feature_version": int(mc.get("feature_version", 1)),
+        "attention": bool(mc.get("attention", False)),
+        "ensemble": int(mc.get("ensemble", 1)),
+    }
+
+
 def prepare(cfg, directory, output):
+    version = model_settings(cfg)["feature_version"]
+    columns = feature_list(version)
     universe = read_json(Path(directory) / "universe.json")
     universe["data_snapshot"] = {}
     store = CandleStore(directory)
@@ -59,7 +75,7 @@ def prepare(cfg, directory, output):
             if raw.empty:
                 raise ValueError(f"No candles for {market}; run download first")
             universe["data_snapshot"][market] = candle_snapshot(raw)
-            frame, feat = feature_frame(raw)
+            frame, feat = feature_frame(raw, version)
             if (frame.index[-1] - frame.index[0]).days < cfg["data"]["minimum_days"]:
                 raise ValueError(
                     f"{market} has fewer than minimum_days; review universe, do not fabricate history"
@@ -74,7 +90,7 @@ def prepare(cfg, directory, output):
     val_end = end - pd.Timedelta(days=cfg["training"]["test_days"])
     train_end = val_end - pd.Timedelta(days=cfg["training"]["validation_days"])
     # Streaming sufficient statistics, trained strictly before train_end.
-    count, sums, squares = 0, np.zeros(len(FEATURES)), np.zeros(len(FEATURES))
+    count, sums, squares = 0, np.zeros(len(columns)), np.zeros(len(columns))
     splits = []
     for frame, feat in zip(frames, features):
         values = feat.loc[feat.index < train_end].dropna().to_numpy(dtype=np.float64)
@@ -82,7 +98,13 @@ def prepare(cfg, directory, output):
         sums += values.sum(axis=0)
         squares += (values**2).sum(axis=0)
         split = split_indices(
-            frame, feat, cfg["model"]["lookback"], cfg["model"]["horizon"], train_end, val_end
+            frame,
+            feat,
+            cfg["model"]["lookback"],
+            cfg["model"]["horizon"],
+            train_end,
+            val_end,
+            warmup=WARMUP[version],
         )
         if any(len(split[k]) < 50 for k in split):
             raise ValueError(
@@ -91,7 +113,7 @@ def prepare(cfg, directory, output):
         splits.append(split)
     mean = sums / count
     std = np.sqrt(np.maximum(squares / count - mean**2, 1e-12))
-    scaler = {"mean": mean.tolist(), "std": std.tolist(), "features": FEATURES}
+    scaler = {"mean": mean.tolist(), "std": std.tolist(), "features": columns}
     cache = Path(output) / "cache"
     cache.mkdir(parents=True, exist_ok=True)
     arrays, labels = [], []
@@ -117,46 +139,39 @@ def references(splits, name, stride=1):
     ).astype(np.int64)
 
 
-def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=False):
-    out = Path(output)
-    out.mkdir(parents=True, exist_ok=True)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if device.type == "cpu" and not allow_cpu:
-        raise RuntimeError(
-            "CUDA GPU not found. Check NVIDIA driver/PyTorch. Use --allow-cpu only intentionally."
-        )
-    torch.set_num_threads(min(4, torch.get_num_threads()))
-    t, mc = cfg["training"], cfg["model"]
-    random.seed(t["seed"])
-    np.random.seed(t["seed"])
-    torch.manual_seed(t["seed"])
-    if device.type == "cuda":
-        torch.backends.cudnn.benchmark = True
-        torch.backends.cuda.matmul.allow_tf32 = True
-    started = time.monotonic()
-    universe, frames, splits, scaler, arrays, labels, train_end, val_end = prepare(cfg, directory, out)
-    inputs = len(FEATURES) + len(frames)
-    model = ReturnLSTM(inputs, **{k: mc[k] for k in ("hidden", "layers", "dropout")}).to(device)
+def lr_factor(epoch, total, warmup):
+    """Linear warmup then cosine decay to 5% of the base learning rate (per epoch)."""
+    if warmup > 0 and epoch < warmup:
+        return 0.3 + 0.7 * epoch / warmup
+    span = max(total - warmup, 1)
+    progress = min(max(epoch - warmup, 0) / span, 1.0)
+    return 0.05 + 0.95 * 0.5 * (1 + math.cos(math.pi * progress))
+
+
+def fit_member(member, cfg, ctx, device, out, resume, started):
+    """Train one ensemble member with early stopping; checkpoint after every epoch."""
+    t, mc, ms = cfg["training"], cfg["model"], model_settings(cfg)
+    seed = t["seed"] + member * 1000
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    model = ReturnLSTM(
+        ctx["inputs"], **{k: mc[k] for k in ("hidden", "layers", "dropout")}, attention=ms["attention"]
+    ).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=t["learning_rate"], weight_decay=t["weight_decay"])
+    schedule = t.get("lr_schedule", "constant")
+    warmup = int(t.get("warmup_epochs", 0))
+
+    def set_lr(epoch):
+        factor = lr_factor(epoch, t["epochs"], warmup) if schedule == "cosine" else 1.0
+        for group in optimizer.param_groups:
+            group["lr"] = t["learning_rate"] * factor
+
     amp = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
-    train_refs = references(splits, "train", t["stride"])
-    val_refs = references(splits, "val")
-    val_small = val_refs[np.linspace(0, len(val_refs) - 1, min(8192, len(val_refs))).astype(int)]
-    val_ds = Windows(arrays, labels, val_small, mc["lookback"])
-    val_y = np.array([labels[c][i] for c, i in val_small])
-    fingerprint = hashlib.sha256(
-        json.dumps(
-            {
-                "cfg": cfg,
-                "universe": universe,
-                "scaler": scaler,
-                "last": [f.index[-1].isoformat() for f in frames],
-                "counts": [len(f) for f in frames],
-            },
-            sort_keys=True,
-        ).encode()
-    ).hexdigest()
-    checkpoint = out / "checkpoint.pt"
+    train_refs, val_ds, val_y = ctx["train_refs"], ctx["val_ds"], ctx["val_y"]
+    arrays, labels = ctx["arrays"], ctx["labels"]
+    fingerprint = hashlib.sha256((ctx["fingerprint"] + f":member{member}").encode()).hexdigest()
+    checkpoint = out / ("checkpoint.pt" if member == 0 else f"checkpoint-{member}.pt")
     best, bad, first_epoch, history, best_state = float("inf"), 0, 0, [], None
     if resume and checkpoint.exists():
         ck = torch.load(checkpoint, map_location=device, weights_only=True)
@@ -171,11 +186,15 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
         torch.set_rng_state(ck["rng"].cpu())
         if device.type == "cuda" and ck.get("cuda_rng"):
             torch.cuda.set_rng_state_all([r.cpu() for r in ck["cuda_rng"]])
-    batch = t["batch_size"]
+        if ck.get("complete"):
+            LOG.info("Ensemble member %d already complete; reusing checkpoint", member + 1)
+            return best_state, history
+    batch = ctx["batch"]
     for epoch in range(first_epoch, t["epochs"]):
         if bad >= t["patience"]:
             break
-        rng = np.random.default_rng(t["seed"] + epoch)
+        set_lr(epoch)
+        rng = np.random.default_rng(seed + epoch)
         cap = t["samples_per_epoch"] or len(train_refs)
         selected = train_refs[rng.choice(len(train_refs), min(cap, len(train_refs)), replace=False)]
         ds = Windows(arrays, labels, selected, mc["lookback"])
@@ -228,11 +247,14 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
                 torch.set_rng_state(cpu_rng)
                 torch.cuda.set_rng_state_all(cuda_rng)
                 LOG.warning("GPU memory limit: restart epoch with batch=%d", batch)
+        ctx["batch"] = batch
         val_pred = predict(model, val_ds, device, batch)
         score = float(np.mean(np.abs(val_pred - val_y)))
         history.append(
             {
+                "member": member + 1,
                 "epoch": epoch + 1,
+                "learning_rate": optimizer.param_groups[0]["lr"],
                 "train_loss": float(np.mean(losses)),
                 "validation_mae_bps": score,
                 "elapsed_seconds": time.monotonic() - started,
@@ -240,9 +262,12 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
             }
         )
         LOG.info(
-            "epoch %d/%d train=%.5f validation MAE=%.3f bps elapsed=%.1f min",
+            "member %d/%d epoch %d/%d lr=%.2e train=%.5f validation MAE=%.3f bps elapsed=%.1f min",
+            member + 1,
+            ctx["members"],
             epoch + 1,
             t["epochs"],
+            optimizer.param_groups[0]["lr"],
             np.mean(losses),
             score,
             (time.monotonic() - started) / 60,
@@ -252,28 +277,113 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
             best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
         else:
             bad += 1
-        temp = checkpoint.with_suffix(".tmp")
-        torch.save(
-            {
-                "fingerprint": fingerprint,
-                "model": model.state_dict(),
-                "optimizer": optimizer.state_dict(),
-                "amp": amp.state_dict(),
-                "best": best,
-                "bad": bad,
-                "epoch": epoch + 1,
-                "history": history,
-                "best_state": best_state,
-                "rng": torch.get_rng_state(),
-                "cuda_rng": torch.cuda.get_rng_state_all() if device.type == "cuda" else [],
-            },
-            temp,
-        )
-        temp.replace(checkpoint)
-        save_json(out / "training_history.json", history)
+        save_checkpoint(checkpoint, fingerprint, model, optimizer, amp, best, bad, epoch + 1, history, best_state)
+        ctx["progress"](member, history)
     if best_state is None:
         raise ValueError("No completed training epoch")
-    model.load_state_dict(best_state)
+    save_checkpoint(
+        checkpoint, fingerprint, model, optimizer, amp, best, bad, len(history), history, best_state, True
+    )
+    return best_state, history
+
+
+def save_checkpoint(path, fingerprint, model, optimizer, amp, best, bad, epoch, history, best_state, done=False):
+    temp = path.with_suffix(".tmp")
+    torch.save(
+        {
+            "fingerprint": fingerprint,
+            "model": model.state_dict(),
+            "optimizer": optimizer.state_dict(),
+            "amp": amp.state_dict(),
+            "best": best,
+            "bad": bad,
+            "epoch": epoch,
+            "history": history,
+            "best_state": best_state,
+            "complete": done,
+            "rng": torch.get_rng_state(),
+            "cuda_rng": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
+        },
+        temp,
+    )
+    temp.replace(path)
+
+
+def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=False):
+    out = Path(output)
+    out.mkdir(parents=True, exist_ok=True)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type == "cpu" and not allow_cpu:
+        raise RuntimeError(
+            "CUDA GPU not found. Check NVIDIA driver/PyTorch. Use --allow-cpu only intentionally."
+        )
+    torch.set_num_threads(min(4, torch.get_num_threads()))
+    t, mc, ms = cfg["training"], cfg["model"], model_settings(cfg)
+    if ms["ensemble"] < 1:
+        raise ValueError("model.ensemble must be at least 1")
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cuda.matmul.allow_tf32 = True
+    started = time.monotonic()
+    universe, frames, splits, scaler, arrays, labels, train_end, val_end = prepare(cfg, directory, out)
+    inputs = len(scaler["features"]) + len(frames)
+    train_refs = references(splits, "train", t["stride"])
+    val_refs = references(splits, "val")
+    val_small = val_refs[np.linspace(0, len(val_refs) - 1, min(8192, len(val_refs))).astype(int)]
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "cfg": cfg,
+                "universe": universe,
+                "scaler": scaler,
+                "last": [f.index[-1].isoformat() for f in frames],
+                "counts": [len(f) for f in frames],
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+    progress_path = out / "progress.json"
+    progress_path.unlink(missing_ok=True)
+
+    def progress(member, member_history):
+        save_json(
+            progress_path,
+            {
+                "member": member + 1,
+                "members": ms["ensemble"],
+                "epochs": t["epochs"],
+                "history": history + member_history,
+                "updated_at": utcnow().isoformat(),
+            },
+        )
+
+    ctx = {
+        "inputs": inputs,
+        "train_refs": train_refs,
+        "val_ds": Windows(arrays, labels, val_small, mc["lookback"]),
+        "val_y": np.array([labels[c][i] for c, i in val_small]),
+        "arrays": arrays,
+        "labels": labels,
+        "fingerprint": fingerprint,
+        "batch": t["batch_size"],
+        "members": ms["ensemble"],
+        "progress": progress,
+    }
+    states, history = [], []
+    for member in range(ms["ensemble"]):
+        state, member_history = fit_member(member, cfg, ctx, device, out, resume, started)
+        states.append(state)
+        history.extend(member_history)
+        save_json(out / "training_history.json", history)
+    members = []
+    for state in states:
+        net = ReturnLSTM(
+            inputs, **{k: mc[k] for k in ("hidden", "layers", "dropout")}, attention=ms["attention"]
+        )
+        net.load_state_dict(state)
+        members.append(net)
+    model = Ensemble(members).to(device)
+    batch = ctx["batch"]
     predictions, sim_frames, forecast = {}, {}, {}
     for name in ("val", "test"):
         refs = references(splits, name)
@@ -284,6 +394,8 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
             "mae_bps": float(np.mean(np.abs(pred - y))),
             "zero_baseline_mae_bps": float(np.mean(np.abs(y))),
             "direction_accuracy": float(np.mean((pred > 0) == (y > 0))),
+            # Information coefficient: correlation of forecast and realized return.
+            "ic": float(np.corrcoef(pred, y)[0, 1]) if len(y) > 2 and np.std(pred) > 1e-9 else 0.0,
         }
         predictions[name], sim_frames[name] = {}, {}
         for i, market in enumerate(universe["markets"]):
@@ -362,11 +474,15 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
         pd.DataFrame(result["trades"]).to_csv(out / f"{name}_trades.csv", index=False)
     parity_error = export_onnx(model, inputs, mc["lookback"], out / "model.onnx")
     manifest = {
-        "schema": 1,
+        "schema": 2,
+        "feature_version": ms["feature_version"],
+        "warmup": WARMUP[ms["feature_version"]],
+        "ensemble": ms["ensemble"],
+        "attention": ms["attention"],
         "created_at": utcnow().isoformat(),
         "model_sha256": sha256(out / "model.onnx"),
         "report_sha256": sha256(out / "report.json"),
-        "features": FEATURES,
+        "features": scaler["features"],
         "markets": universe["markets"],
         "universe": universe,
         "lookback": mc["lookback"],

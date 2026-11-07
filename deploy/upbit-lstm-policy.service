@@ -1,0 +1,25 @@
+[Unit]
+Description=Upbit LSTM daily LLM parameter policy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=upbitbot
+Group=upbitbot
+WorkingDirectory=/opt/upbit-lstm/current
+# LLM key only. The trading service never reads this file and this service never reads Upbit keys.
+EnvironmentFile=/etc/upbit-lstm-llm.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=OMP_NUM_THREADS=1
+ExecStart=/opt/upbit-lstm/current/.venv/bin/python -m upbit_bot.cli policy-update --artifacts /opt/upbit-lstm/current/artifacts --state-dir /var/lib/upbit-lstm
+TimeoutStartSec=600
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/upbit-lstm
+UMask=0077
+MemoryMax=1G
+StandardOutput=journal
+StandardError=journal

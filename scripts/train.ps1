@@ -1,4 +1,4 @@
-param([switch]$Resume, [switch]$AllowCpu, [switch]$Hmm, [string]$TorchIndex = 'https://download.pytorch.org/whl/cu128')
+param([switch]$Resume, [switch]$AllowCpu, [switch]$Hmm, [switch]$Gui, [string]$TorchIndex = 'https://download.pytorch.org/whl/cu128')
 $ErrorActionPreference = 'Stop'
 $ProjectDir = Split-Path $PSScriptRoot -Parent
 Set-Location -LiteralPath $ProjectDir
@@ -25,6 +25,18 @@ $PythonPath = Join-Path $ProjectDir '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $PythonPath)) {
     & $UvPath venv --python 3.12 .venv
     if ($LASTEXITCODE -ne 0) { throw 'Python environment creation failed' }
+}
+if ($Gui) {
+    # Settings window: installs the full training environment once, then all jobs run from the GUI.
+    if ($AllowCpu) { $TorchIndex = 'https://download.pytorch.org/whl/cpu' }
+    & $UvPath pip install --python $PythonPath --index-url $TorchIndex 'torch==2.7.1'
+    if ($LASTEXITCODE -ne 0) { throw 'PyTorch installation failed. Check GPU/CUDA installation instructions.' }
+    & $UvPath pip install --python $PythonPath -r requirements-runtime.txt 'onnx==1.21.0' -e '.[hmm]'
+    if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
+    Write-Host 'Opening the training window. Keep this console open; errors appear here too.'
+    & $PythonPath -m upbit_bot.cli gui
+    if ($LASTEXITCODE -ne 0) { throw 'GUI exited with an error' }
+    exit 0
 }
 if ($Hmm) {
     & $UvPath pip install --python $PythonPath -r requirements-runtime.txt -e '.[hmm]'

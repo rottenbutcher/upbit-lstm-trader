@@ -26,6 +26,13 @@ def load_config(path="config.toml"):
         raise ValueError("Model/training sizes must be positive")
     if s["fee_rate"] < 0 or s["slippage_bps"] < 0:
         raise ValueError("Trading costs must be nonnegative")
+    if int(m.get("ensemble", 1)) < 1 or int(m.get("feature_version", 1)) not in (1, 2):
+        raise ValueError("model.ensemble must be >= 1 and model.feature_version 1 or 2")
+    if t.get("lr_schedule", "constant") not in ("constant", "cosine"):
+        raise ValueError("training.lr_schedule must be 'constant' or 'cosine'")
+    from .policy import settings as policy_settings
+
+    policy_settings(cfg)  # Fails fast on unsafe policy bounds.
     return cfg
 
 

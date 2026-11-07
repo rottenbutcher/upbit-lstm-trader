@@ -4,11 +4,12 @@ set -euo pipefail
 
 usage() {
   cat <<'TEXT'
-Usage: bash scripts/train.sh [train|resume|hmm|check]
+Usage: bash scripts/train.sh [train|resume|hmm|check|gui]
   train   Install Python/CUDA PyTorch, check GPU, download, train and package (default)
   resume  Resume LSTM on unchanged saved data/config; no download
   hmm     CPU HMM research; compare with saved LSTM when available
   check   Install environment and run a small CUDA LSTM forward/backward check only
+  gui     Install environment and open the training settings window
 Targets Linux x86_64 (Ubuntu 22.04/24.04). NVIDIA driver is required for LSTM.
 TEXT
 }
@@ -16,7 +17,7 @@ die() { printf '%s\n' "$*" >&2; exit 1; }
 mode="${1:-train}"
 if [[ "$mode" == --help || "$mode" == -h ]]; then usage; exit 0; fi
 [[ $# -le 1 ]] || { usage; exit 2; }
-case "$mode" in train|resume|hmm|check) ;; *) usage; exit 2 ;; esac
+case "$mode" in train|resume|hmm|check|gui) ;; *) usage; exit 2 ;; esac
 [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]] || die 'Use a Linux x86_64 training desktop.'
 [[ $EUID -ne 0 ]] || die 'Run this script as your normal user, without sudo.'
 
@@ -73,6 +74,10 @@ fi
 
 "$uv_path" pip install --python "$python_path" --index-url https://download.pytorch.org/whl/cu128 'torch==2.7.1+cu128'
 "$uv_path" pip install --python "$python_path" -r requirements-runtime.txt 'onnx==1.21.0' -e .
+if [[ "$mode" == gui ]]; then
+  "$uv_path" pip install --python "$python_path" -e '.[hmm]'
+  exec "$python_path" -m upbit_bot.cli gui
+fi
 "$python_path" -m upbit_bot.cli doctor
 # is_available alone cannot catch an unsupported GPU kernel or a broken cuDNN install.
 "$python_path" - <<'PY'
@@ -81,8 +86,8 @@ from upbit_bot.model import ReturnLSTM
 
 if not torch.cuda.is_available():
     raise SystemExit("CUDA unavailable: check NVIDIA driver, CUDA_VISIBLE_DEVICES and PyTorch CUDA build")
-model = ReturnLSTM(21, hidden=64, layers=2, dropout=0.15).cuda().train()
-x = torch.randn(4, 96, 21, device="cuda")
+model = ReturnLSTM(32, hidden=64, layers=2, dropout=0.15, attention=True).cuda().train()
+x = torch.randn(4, 96, 32, device="cuda")
 with torch.autocast(device_type="cuda", dtype=torch.float16):
     prediction = model(x)
     loss = (prediction.float() / 100).square().mean()

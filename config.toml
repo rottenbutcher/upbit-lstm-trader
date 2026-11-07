@@ -10,6 +10,13 @@ horizon = 6
 hidden = 64
 layers = 2
 dropout = 0.15
+# 2 = daily-context features (old bundles stay on 1 and keep working).
+feature_version = 2
+# Attention pooling over the LSTM sequence in addition to the last hidden state.
+attention = true
+# Independently seeded members averaged in one ONNX file; their disagreement is the
+# uncertainty output used by the runtime. Training time scales with this number.
+ensemble = 3
 
 [hmm]
 states = 3
@@ -28,6 +35,9 @@ patience = 3
 batch_size = 256
 learning_rate = 0.001
 weight_decay = 0.0001
+# "cosine" = warmup then cosine decay per epoch; "constant" = previous behavior.
+lr_schedule = "cosine"
+warmup_epochs = 1
 samples_per_epoch = 120000
 stride = 3
 validation_days = 90
@@ -61,3 +71,38 @@ max_candle_age_seconds = 390
 model_max_age_days = 30
 max_errors = 3
 delay_seconds = 15
+
+# Daily parameter policy (LLM or manual). Re-validated by the runtime on every cycle.
+# Risk multipliers (position/exposure/stop/daily loss) are capped at 1.0 in code:
+# a policy can only reduce risk relative to the backtested values.
+[policy]
+enabled = true
+valid_hours = 36.0
+on_stale = "baseline"            # or "no_new_entries"
+max_step = 0.5                   # max move per update, as a fraction of each allowed range
+threshold_multiplier = [0.8, 3.0]
+position_multiplier = [0.0, 1.0]
+exposure_multiplier = [0.0, 1.0]
+stop_loss_multiplier = [0.5, 1.0]
+take_profit_multiplier = [0.5, 1.5]
+hold_multiplier = [0.5, 2.0]
+daily_loss_multiplier = [0.5, 1.0]
+exit_bps = [-20.0, 30.0]
+uncertainty_penalty = [0.0, 2.0]
+
+[llm]
+provider = "anthropic"           # "anthropic" or "openai" (any OpenAI-compatible endpoint)
+model = "claude-sonnet-5-5"
+api_key_env = ""                 # default: ANTHROPIC_API_KEY / OPENAI_API_KEY
+base_url = ""
+anthropic_version = "2023-06-01"
+max_tokens = 2000
+timeout_seconds = 120
+min_confidence = 0.35            # below this the LLM's sizing is ignored (baseline kept)
+min_sources = 3                  # skip the update when fewer data sources succeed
+
+[macro]
+crypto_sentiment = true
+# Optional overrides (defaults in src/upbit_bot/macro.py):
+# fred_series = { DGS10 = "US 10-year Treasury yield (%)" }
+# feeds = { "Federal Reserve press releases" = "https://www.federalreserve.gov/feeds/press_all.xml" }

@@ -2,7 +2,24 @@
 
 Upbit 원화마켓 거래대금 상위 5종목의 5분봉을 수집하고, **RTX 5060 8GB에서 로컬 학습 → Oracle CPU에서 5분마다 판단**하는 현물 자동매매 프로젝트입니다. 기본 모드는 모의매매입니다. 실제 학습 전 모델이나 수익률을 제공하지 않으며, 수익·정확도는 보장할 수 없습니다.
 
-## 가장 짧은 실행 방법
+## 구성 요약
+
+- **LSTM 앙상블 (5분마다):** 일봉 수준 문맥을 포함한 27개 피처, 어텐션 풀링, 독립 학습 3개 모델 평균. 모델 간 불일치를 불확실성으로 함께 출력합니다. 상세 내용은 [docs/DESIGN.md](docs/DESIGN.md#lstm-v2)를 보세요.
+- **LLM 일일 정책 (하루 1회):** 거시 지표와 Fed·ECB 등 공식 발표를 LLM이 읽고 다음 날 매매 파라미터를 정합니다. 검증된 위험 한도 안에서만 반영되며, 상세 내용은 [docs/LLM_POLICY.md](docs/LLM_POLICY.md)를 보세요.
+- **학습 GUI:** 설정 편집, 프리셋, 학습 실행, 진행률, 보고서 열기를 한 창에서 처리합니다.
+
+## 가장 쉬운 방법 — 학습 GUI
+
+Windows는 **`GUI.cmd` 더블클릭**, Linux는 `bash scripts/train.sh gui`를 실행합니다. 처음 한 번 학습 환경을 자동 설치한 뒤 설정 창이 열립니다.
+
+1. 위쪽에서 **프리셋**(빠른 점검 / 균형 / 고성능)을 고르고 `적용`을 누르거나, 탭별로 값을 직접 바꿉니다. 각 항목 옆에 설명이 있습니다.
+2. **`설정 저장`**을 누릅니다. 학습과 같은 검증을 먼저 통과해야 저장되며, `config.toml`의 주석은 유지됩니다. 이전 설정은 `config.toml.bak`에 보관됩니다.
+3. **`① 데이터 받기 + 학습 + 패키지`**를 누릅니다. 진행률 막대에 앙상블 모델 번호, epoch, 검증 오차가 표시됩니다. `중지` 후에는 `이어서 학습`으로 재개합니다.
+4. 끝나면 **`결과 보고서 열기`**를 누릅니다. 서버에 올릴 파일은 `dist/oracle-upload.zip`입니다.
+
+GPU가 없는 PC에서 시험만 하려면 `GPU 없이(CPU)`를 체크하세요. 기존 `TRAIN.cmd` / `RESUME.cmd` / `HMM.cmd`도 그대로 동작합니다.
+
+## 가장 짧은 실행 방법 (명령 방식)
 
 ### 1. 학습 PC — RTX 5060 8GB, Windows 10/11
 
@@ -15,6 +32,8 @@ PowerShell로 실행하려면:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\train.ps1
 ```
+
+앙상블은 모델별로 체크포인트(`checkpoint.pt`, `checkpoint-1.pt`, …)를 저장합니다. 중단 후에는 완료된 모델을 건너뛰고 이어서 학습합니다. 학습 시간은 대략 `ensemble` 값에 비례합니다(기본 3).
 
 학습 중단 시 **`RESUME.cmd`**로 마지막 완료 epoch부터 이어갑니다. 다운로드 중단은 `TRAIN.cmd`를 다시 실행하세요. `RESUME.cmd`는 데이터를 갱신하지 않습니다. 설정이나 데이터가 바뀌면 이전 체크포인트를 재개할 수 없으므로 새 `TRAIN.cmd` 실행이 필요합니다. 재학습 전 기존 `artifacts` 폴더는 별도 보관하세요.
 
@@ -103,6 +122,17 @@ sudo bash /opt/upbit-lstm/current/deploy/botctl.sh adopt --market KRW-BTC --quan
 ```
 
 등록 후에는 해당 수량의 매도가 자동화됩니다. 봇 운용 중 수동 거래·다른 봇의 동일 자산 거래는 피하세요. 등록하지 않은 코인은 봇이 새로 매수한 수량과 별도로 유지됩니다.
+
+### 4. LLM 일일 파라미터 정책 — 선택
+
+Anthropic(기본) 또는 OpenAI 호환 API 키를 서버에 등록하면, 매일 09:20 KST에 거시 지표와 공식 발표를 분석해 다음 날 매매 파라미터를 조정합니다. 조정 범위는 검증된 값보다 위험을 줄이는 방향으로 제한됩니다. 설정하지 않으면 기존처럼 검증된 기준값으로 동작합니다.
+
+```bash
+sudo bash /opt/upbit-lstm/current/deploy/configure-llm.sh
+sudo bash /opt/upbit-lstm/current/deploy/botctl.sh policy-show
+```
+
+범위, 수집 출처, 수동 조정, 한계는 [docs/LLM_POLICY.md](docs/LLM_POLICY.md)를 보세요.
 
 ## 데이터·학습 설계
 

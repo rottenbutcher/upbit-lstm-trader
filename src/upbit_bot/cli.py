@@ -53,6 +53,51 @@ def adoption(cfg, args):
             state.close()
 
 
+def parse_overrides(pairs):
+    out = {}
+    for pair in pairs:
+        key, sep, raw = pair.partition("=")
+        if not sep:
+            raise ValueError(f"Use key=value, got {pair!r}")
+        try:
+            out[key] = json.loads(raw)
+        except json.JSONDecodeError:
+            out[key] = raw
+    return out
+
+
+def policy_command(cfg, args):
+    from . import llm_policy, policy
+    from .runtime import Bundle
+
+    directory = Path(args.state_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    if args.command == "policy-show":
+        manifest = Bundle(args.artifacts).manifest
+        _strategy, params, info = policy.effective(cfg, manifest, directory)
+        doc = policy.load(directory) or {}
+        print(json.dumps({"effective": params, "status": info, "file": doc}, indent=2, ensure_ascii=False))
+        return
+    with FileLock(str(directory / "policy.lock"), timeout=600):
+        manifest = Bundle(args.artifacts).manifest
+        if args.command == "policy-update":
+            from .api import Upbit
+
+            result = llm_policy.update(cfg, manifest, directory, Upbit(), dry_run=args.dry_run)
+        elif args.command == "policy-set":
+            if not args.confirm:
+                raise ValueError("Pass --confirm to write a manual policy")
+            result = llm_policy.manual(cfg, manifest, directory, parse_overrides(args.set))
+        else:  # policy-clear
+            if not args.confirm:
+                raise ValueError("Pass --confirm to remove the policy (runtime returns to baseline)")
+            target = policy.path(directory)
+            if target.exists():
+                target.unlink()
+            result = {"cleared": True}
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
 def main():
     parser = argparse.ArgumentParser(description="Upbit local LSTM research + Oracle inference")
     parser.add_argument("--config", default="config.toml")
@@ -83,6 +128,23 @@ def main():
         if name != "status":
             p.add_argument("--mode", choices=["paper", "live"], default="paper")
             p.add_argument("--confirm", action="store_true")
+    p = sub.add_parser("policy-update", help="Collect macro data, ask the LLM, write bounded policy")
+    p.add_argument("--artifacts", default="artifacts")
+    p.add_argument("--state-dir", default="state")
+    p.add_argument("--dry-run", action="store_true", help="Print the policy without saving it")
+    p = sub.add_parser("policy-show", help="Show the policy the next cycle will use")
+    p.add_argument("--artifacts", default="artifacts")
+    p.add_argument("--state-dir", default="state")
+    p = sub.add_parser("policy-set", help="Manual override within the same bounds")
+    p.add_argument("--artifacts", default="artifacts")
+    p.add_argument("--state-dir", default="state")
+    p.add_argument("--set", action="append", default=[], metavar="KEY=VALUE")
+    p.add_argument("--confirm", action="store_true")
+    p = sub.add_parser("policy-clear", help="Delete policy file (baseline parameters)")
+    p.add_argument("--artifacts", default="artifacts")
+    p.add_argument("--state-dir", default="state")
+    p.add_argument("--confirm", action="store_true")
+    sub.add_parser("gui", help="Training settings and launcher window")
     p = sub.add_parser("adopt")
     p.add_argument("--artifacts", default="artifacts")
     p.add_argument("--state-dir", default="state")
@@ -91,8 +153,15 @@ def main():
     p.add_argument("--confirm", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    if args.command == "gui":
+        from .gui import launch
+
+        launch(args.config)
+        return
     cfg = load_config(args.config)
-    if args.command == "doctor":
+    if args.command.startswith("policy-"):
+        policy_command(cfg, args)
+    elif args.command == "doctor":
         import importlib.util
         import platform
 

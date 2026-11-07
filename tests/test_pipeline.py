@@ -2,6 +2,7 @@
 
 import copy
 import importlib.util
+import json
 import zipfile
 
 import numpy as np
@@ -21,7 +22,7 @@ def test_train_export_and_package(tmp_path):
 
     cfg = copy.deepcopy(load_config())
     cfg["data"]["minimum_days"] = 5
-    cfg["model"].update(lookback=16, hidden=8, layers=1, dropout=0)
+    cfg["model"].update(lookback=16, hidden=8, layers=1, dropout=0, ensemble=2, attention=True)
     cfg["training"].update(epochs=1, batch_size=32, samples_per_epoch=64, validation_days=1, test_days=1)
     directory, out = tmp_path / "data", tmp_path / "artifacts"
     save_json(directory / "universe.json", {"markets": ["KRW-BTC", "KRW-ETH"], "selected_at": "synthetic"})
@@ -33,14 +34,20 @@ def test_train_export_and_package(tmp_path):
     assert manifest["approved_for_live"] is False
     assert manifest["onnx_max_error_bps"] < 0.005
     bundle = Bundle(out)
-    y = bundle.session.run(None, {"features": np.zeros((5, 16, len(FEATURES) + 2), np.float32)})[0]
+    assert manifest["schema"] == 2 and manifest["features"] == FEATURES and manifest["ensemble"] == 2
+    y, spread = bundle.session.run(None, {"features": np.zeros((5, 16, len(FEATURES) + 2), np.float32)})
     assert len(y) == 5 and np.isfinite(y).all()
+    assert (spread >= 0).all() and np.isfinite(spread).all()
+    history = json.loads((out / "training_history.json").read_text())
+    assert {h["member"] for h in history} == {1, 2}
     destination = package(artifacts=out, destination=tmp_path / "oracle.zip")
     with zipfile.ZipFile(destination) as archive:
         names = archive.namelist()
         assert "artifacts/model.onnx" in names
         assert "requirements-runtime.txt" in names
         assert "deploy/install.sh" in names
+        assert {"deploy/upbit-lstm-policy.service", "deploy/upbit-lstm-policy.timer",
+                "deploy/configure-llm.sh", "docs/LLM_POLICY.md"} <= set(names)
         assert not any("checkpoint" in n or n == ".env" or "sqlite" in n for n in names)
     if importlib.util.find_spec("hmmlearn"):
         import pandas as pd
@@ -68,3 +75,24 @@ def test_train_export_and_package(tmp_path):
         f.write(b"tampered")
     with pytest.raises(ValueError, match="hash mismatch"):
         Bundle(out)
+
+
+def test_schema1_bundle_still_loads(tmp_path):
+    """Bundles trained before feature v2 / ensembles keep working until retrained."""
+    torch = pytest.importorskip("torch")
+    from upbit_bot.common import sha256
+    from upbit_bot.features import FEATURES_V1
+    from upbit_bot.model import ReturnLSTM
+
+    net = ReturnLSTM(len(FEATURES_V1) + 2, hidden=8, layers=1, dropout=0).eval()
+    torch.onnx.export(net, torch.randn(1, 16, len(FEATURES_V1) + 2), str(tmp_path / "model.onnx"),
+                      input_names=["features"], output_names=["return_bps"],
+                      dynamic_axes={"features": {0: "batch"}}, opset_version=17, dynamo=False)
+    save_json(tmp_path / "report.json", {"approved_for_live": False})
+    save_json(tmp_path / "manifest.json", {
+        "schema": 1, "features": FEATURES_V1, "model_sha256": sha256(tmp_path / "model.onnx"),
+        "report_sha256": sha256(tmp_path / "report.json")})
+    bundle = Bundle(tmp_path)
+    assert bundle.feature_version == 1 and bundle.warmup == 48
+    out = bundle.session.run(None, {"features": np.zeros((2, 16, len(FEATURES_V1) + 2), np.float32)})
+    assert len(out) == 1

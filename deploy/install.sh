@@ -38,7 +38,17 @@ PY
 ln -sfn "$RELEASE_DIR" /opt/upbit-lstm/current
 install -m 644 deploy/upbit-lstm.service /etc/systemd/system/upbit-lstm.service
 install -m 644 deploy/upbit-lstm.timer /etc/systemd/system/upbit-lstm.timer
+install -m 644 deploy/upbit-lstm-policy.service /etc/systemd/system/upbit-lstm-policy.service
+install -m 644 deploy/upbit-lstm-policy.timer /etc/systemd/system/upbit-lstm-policy.timer
+if [[ ! -f /etc/upbit-lstm-llm.env ]]; then
+  install -o root -g upbitbot -m 640 /dev/null /etc/upbit-lstm-llm.env
+fi
 systemctl daemon-reload
 systemctl enable --now upbit-lstm.timer
+# The daily LLM policy is opt-in: enabled by deploy/configure-llm.sh once a key is stored.
+if grep -qE '^(ANTHROPIC|OPENAI)_API_KEY=.+' /etc/upbit-lstm-llm.env; then
+  systemctl enable --now upbit-lstm-policy.timer
+fi
 systemctl list-timers upbit-lstm.timer --no-pager
 echo 'Installed. Paper trading is the default. Logs: sudo journalctl -u upbit-lstm.service -f'
+echo 'LLM daily policy: sudo bash deploy/configure-llm.sh  (without it, baseline parameters are used)'

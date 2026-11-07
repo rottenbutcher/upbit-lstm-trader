@@ -17,7 +17,8 @@ from filelock import FileLock
 from .api import APIError, Upbit, healthy_market
 from .common import read_json, save_json, sha256, utcnow
 from .data import candle_frame, iso
-from .features import FEATURES, feature_frame, model_input
+from .features import WARMUP, feature_frame, feature_list, model_input
+from .policy import effective as effective_policy
 from .state import State
 from .strategy import action
 
@@ -28,8 +29,12 @@ class Bundle:
     def __init__(self, directory):
         path = Path(directory)
         self.manifest = m = read_json(path / "manifest.json")
-        if m["schema"] != 1 or m["features"] != FEATURES:
+        if m["schema"] not in (1, 2):
+            raise ValueError("Unsupported model schema")
+        self.feature_version = int(m.get("feature_version", 1))
+        if m["features"] != feature_list(self.feature_version):
             raise ValueError("Unsupported model/feature schema")
+        self.warmup = int(m.get("warmup", WARMUP[self.feature_version]))
         if sha256(path / "model.onnx") != m["model_sha256"]:
             raise ValueError("Model hash mismatch")
         if sha256(path / "report.json") != m["report_sha256"]:
@@ -43,9 +48,10 @@ class Bundle:
         )
 
     def infer(self, api, end):
+        """Returns (predictions_bps, closes, uncertainty_bps) for the last closed candle."""
         m = self.manifest
         x, closes = [], {}
-        count = m["lookback"] + 48 + 12
+        count = m["lookback"] + self.warmup + 12
         for i, market in enumerate(m["markets"]):
             rows, before = [], end
             for _ in range(math.ceil(count / 200) + 3):
@@ -61,16 +67,23 @@ class Bundle:
             expected = end - pd.Timedelta(minutes=5)
             if raw.empty or raw.index[-1] != expected:
                 raise ValueError(f"{market}: most recent closed candle missing; skip trading")
-            frame, feat = feature_frame(raw)
+            frame, feat = feature_frame(raw, self.feature_version)
             window = feat.iloc[-m["lookback"] :].to_numpy()
             if len(window) != m["lookback"] or not np.isfinite(window).all():
                 raise ValueError(f"{market}: incomplete features")
             x.append(model_input(window, m["scaler"], i, len(m["markets"])))
             closes[market] = float(frame["close"].iloc[-1])
-        pred = self.session.run(None, {"features": np.stack(x)})[0]
-        if not np.isfinite(pred).all():
+        outputs = self.session.run(None, {"features": np.stack(x)})
+        pred = outputs[0].reshape(-1)
+        # Schema-1 bundles are single models without an uncertainty output.
+        spread = outputs[1].reshape(-1) if len(outputs) > 1 else np.zeros_like(pred)
+        if not (np.isfinite(pred).all() and np.isfinite(spread).all()):
             raise ValueError("Nonfinite model output")
-        return dict(zip(m["markets"], map(float, pred))), closes
+        return (
+            dict(zip(m["markets"], map(float, pred))),
+            closes,
+            dict(zip(m["markets"], map(float, spread))),
+        )
 
 
 def reconcile(api, state):
@@ -127,7 +140,9 @@ def risk_state(state, equity, day, strategy):
 
 def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
     now = now or utcnow()
-    m, s, r = bundle.manifest, bundle.manifest["strategy"], cfg["runtime"]
+    m, r = bundle.manifest, cfg["runtime"]
+    # Daily LLM/manual policy, re-validated against the evaluated strategy on every cycle.
+    s, params, policy_info = effective_policy(cfg, m, state_dir, now)
     if mode == "live" and not reconcile(api, state):
         return {"status": "waiting_for_fill"}
     if (Path(state_dir) / "STOP").exists():
@@ -136,7 +151,11 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
     bar = int(end.timestamp() // 300) - 1
     if state.db.execute("SELECT 1 FROM cycles WHERE bar=?", (bar,)).fetchone():
         return {"status": "already_processed", "bar": bar}
-    pred, closes = bundle.infer(api, end)
+    inferred = bundle.infer(api, end)
+    pred, closes = inferred[0], inferred[1]
+    uncertainty = inferred[2] if len(inferred) > 2 else dict.fromkeys(pred, 0.0)
+    # Penalize ensemble disagreement: uncertain forecasts need a larger edge to enter.
+    signal = {k: v - params["uncertainty_penalty"] * uncertainty.get(k, 0.0) for k, v in pred.items()}
     if utcnow().timestamp() - (end.timestamp() - 300) > r["max_candle_age_seconds"]:
         raise ValueError("Candle expired during inference")
     healthy = {row["market"] for row in api.markets() if healthy_market(row)}
@@ -154,12 +173,16 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
         and bundle.report["approved_for_live"]
         and 0 <= age_days <= r["model_max_age_days"]
     )
-    buy_allowed = not loss_halt and (mode == "paper" or live_approved)
+    buy_allowed = (
+        not loss_halt and params["allow_new_entries"] and (mode == "paper" or live_approved)
+    )
     if not state.claim_cycle(bar):
         return {"status": "already_processed", "bar": bar}
     decisions = []
     for market in sorted(m["markets"]):
-        decision = action(pred[market], positions.get(market), closes[market], bar, s, m["threshold_bps"])
+        decision = action(signal[market], positions.get(market), closes[market], bar, s, params["threshold_bps"])
+        if decision == "buy" and market in params["blocked_markets"]:
+            decision = "hold"
         if loss_halt and market in positions:
             decision = "sell"
         decisions.append((decision, market))
@@ -254,6 +277,9 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
         "bar": bar,
         "equity_krw": equity,
         "predictions_bps": pred,
+        "uncertainty_bps": uncertainty,
+        "policy": policy_info,
+        "threshold_bps": params["threshold_bps"],
         "positions": state.positions(),
         "buy_allowed": buy_allowed,
         "risk_halt": loss_halt,

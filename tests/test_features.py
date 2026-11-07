@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from upbit_bot.data import candle_frame, regularize
-from upbit_bot.features import feature_frame, split_indices
+from upbit_bot.features import FEATURES_V1, WARMUP, feature_frame, feature_list, split_indices
 
 
 def candles(n=1000, start="2024-01-01"):
@@ -65,8 +66,29 @@ def test_candle_sort_deduplicate():
     assert str(frame.index.tz) == "UTC"
 
 
-def test_live_rolling_window_matches_historical_features():
+@pytest.mark.parametrize("version", [1, 2])
+def test_live_rolling_window_matches_historical_features(version):
+    # Runtime fetches lookback + warmup + 12 candles; features must equal the full-history values.
     raw = candles()
-    _, full = feature_frame(raw)
-    _, recent = feature_frame(raw.iloc[-156:])
+    _, full = feature_frame(raw, version)
+    _, recent = feature_frame(raw.iloc[-(96 + WARMUP[version] + 12) :], version)
     np.testing.assert_allclose(full.iloc[-96:].to_numpy(), recent.iloc[-96:].to_numpy(), atol=1e-5)
+    assert np.isfinite(recent.iloc[-96:].to_numpy()).all()
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_feature_versions_are_causal(version):
+    raw = candles()
+    _, before = feature_frame(raw, version)
+    changed = raw.copy()
+    changed.iloc[600:, :4] *= 3
+    _, after = feature_frame(changed, version)
+    np.testing.assert_equal(before.iloc[:600].to_numpy(), after.iloc[:600].to_numpy())
+    assert list(before.columns) == feature_list(version)
+
+
+def test_v2_extends_v1_without_changing_it():
+    raw = candles()
+    _, v1 = feature_frame(raw, 1)
+    _, v2 = feature_frame(raw, 2)
+    np.testing.assert_equal(v1.to_numpy(), v2[FEATURES_V1].to_numpy())

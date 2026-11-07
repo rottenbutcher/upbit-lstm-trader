@@ -102,6 +102,7 @@ def test_snapshot_freezes_lstm_dates_and_rejects_changed_candles(history):
     dataset = load_dataset(cfg, directory)
     manifest = {
         "universe": universe,
+        "feature_version": cfg["model"]["feature_version"],
         "data_snapshot": dataset[5],
         "train_end": dataset[6].isoformat(),
         "validation_end": dataset[7].isoformat(),
