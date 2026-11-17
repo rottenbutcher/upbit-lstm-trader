@@ -88,6 +88,49 @@ def selection_key(result, gate):
     return (m["trades"] >= gate["min_trades"], m["sharpe_daily"], m["profit_factor"])
 
 
+def searched_keys(cfg):
+    keys = list(cfg["strategy"].get("search", {}))
+    if "volatility_filters_bps" in cfg["strategy"] and "min_volatility_bps" not in keys:
+        keys.append("min_volatility_bps")
+    return keys
+
+
+def strategy_grid(cfg):
+    """Strategy variants searched on validation: the cartesian product of [strategy.search]."""
+    base = {k: v for k, v in cfg["strategy"].items() if k not in ("search", "volatility_filters_bps")}
+    search = dict(cfg["strategy"].get("search", {}))
+    if "volatility_filters_bps" in cfg["strategy"] and "min_volatility_bps" not in search:
+        search["min_volatility_bps"] = cfg["strategy"]["volatility_filters_bps"]
+    variants = [base]
+    for key, values in search.items():
+        variants = [{**v, key: value} for v in variants for value in values]
+    return variants
+
+
+def select_strategy(cfg, frames, predictions):
+    """Every (strategy variant, threshold) on validation; returns the winner and all results.
+    Exit rules must match the horizon, so they are chosen together with the entry threshold."""
+    results = []
+    for strategy in strategy_grid(cfg):
+        for threshold in threshold_candidates(cfg, predictions):
+            result = simulate(
+                frames,
+                predictions,
+                strategy,
+                threshold,
+                cfg["runtime"]["capital_krw"],
+                max_order=cfg["runtime"]["max_order_krw"],
+            )
+            results.append((threshold, strategy, result))
+    candidates = [item for item in results if passed(item[2], cfg["gate"])]
+    threshold, chosen, validation = max(
+        candidates or results, key=lambda item: selection_key(item[2], cfg["gate"])
+    )
+    searched = {k: chosen.get(k) for k in cfg["strategy"].get("search", {})}
+    LOG.info("Selected threshold %.2f bps, %s (%d variants)", threshold, searched, len(results))
+    return threshold, chosen, validation, results
+
+
 def model_settings(cfg):
     """Model options with defaults that keep older config files valid."""
     mc = cfg["model"]
@@ -492,26 +535,7 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
             sim_frames[name][market] = frames[i].loc[
                 frames[i].index[indexes[0]] : frames[i].index[min(indexes[-1] + 1, len(frames[i]) - 1)]
             ]
-    results = []
-    floors = cfg["strategy"].get("volatility_filters_bps") or [cfg["strategy"].get("min_volatility_bps", 0.0)]
-    for floor in floors:
-        strategy = {**cfg["strategy"], "min_volatility_bps": float(floor)}
-        for threshold in threshold_candidates(cfg, predictions["val"]):
-            result = simulate(
-                sim_frames["val"],
-                predictions["val"],
-                strategy,
-                threshold,
-                cfg["runtime"]["capital_krw"],
-                max_order=cfg["runtime"]["max_order_krw"],
-            )
-            results.append((threshold, strategy, result))
-    candidates = [item for item in results if passed(item[2], cfg["gate"])]
-    # Enough trades first, then risk-adjusted return (max return picks the luckiest setting).
-    threshold, chosen, validation = max(
-        candidates or results, key=lambda item: selection_key(item[2], cfg["gate"])
-    )
-    LOG.info("Selected threshold %.2f bps, volatility floor %.1f bps", threshold, chosen["min_volatility_bps"])
+    threshold, chosen, validation, results = select_strategy(cfg, sim_frames["val"], predictions["val"])
     test = simulate(
         sim_frames["test"],
         predictions["test"],
@@ -536,7 +560,7 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
             )["metrics"]
         )
     approved = bool(
-        candidates and passed(test, cfg["gate"]) and sum(m["return_pct"] > 0 for m in block_metrics) >= 2
+        passed(validation, cfg["gate"]) and passed(test, cfg["gate"]) and sum(m["return_pct"] > 0 for m in block_metrics) >= 2
     )
     test_baseline = buy_hold(
         sim_frames["test"], predictions["test"], cfg["runtime"]["capital_krw"], cfg["strategy"]
@@ -551,9 +575,10 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
             "buy_hold_test": test_baseline,
             "cash_return_pct": 0,
             "threshold_search": [
-                {"bps": th, "min_volatility_bps": st["min_volatility_bps"], **r["metrics"]} for th, st, r in results
+                {"bps": th, **{k: st.get(k) for k in searched_keys(cfg)}, **r["metrics"]}
+                for th, st, r in results
             ],
-            "min_volatility_bps": chosen["min_volatility_bps"],
+            "selected_strategy": {k: chosen.get(k) for k in searched_keys(cfg)},
             "approved_for_live": approved,
             "threshold_bps": threshold,
             "limitations": [

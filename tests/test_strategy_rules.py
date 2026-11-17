@@ -184,3 +184,22 @@ def test_threshold_candidates_and_selection_key():
     lucky = {"metrics": {"trades": 1, "sharpe_daily": 5.0, "profit_factor": 999}}
     solid = {"metrics": {"trades": 80, "sharpe_daily": 1.0, "profit_factor": 1.2}}
     assert max([lucky, solid], key=lambda r: selection_key(r, gate)) is solid
+
+
+def test_strategy_grid_is_cartesian_and_validated(tmp_path):
+    from pathlib import Path
+
+    import upbit_bot.common as common
+    from upbit_bot.train import strategy_grid
+
+    cfg = common.load_config()
+    cfg["strategy"]["search"] = {"trailing_stop": [0.0, 0.02], "min_volatility_bps": [0.0, 10.0, 20.0]}
+    grid = strategy_grid(cfg)
+    assert len(grid) == 6 and all("search" not in g for g in grid)
+    assert {(g["trailing_stop"], g["min_volatility_bps"]) for g in grid} == {
+        (t, v) for t in (0.0, 0.02) for v in (0.0, 10.0, 20.0)
+    }
+    bad = tmp_path / "bad.toml"
+    bad.write_text(Path("config.toml").read_text().replace("\n[strategy.search]\n", "\n[strategy.search]\nfee_rate = [0.0]\n"))
+    with pytest.raises(ValueError, match="searchable"):
+        common.load_config(bad)

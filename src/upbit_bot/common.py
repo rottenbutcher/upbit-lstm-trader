@@ -41,8 +41,20 @@ def load_config(path="config.toml"):
         raise ValueError("strategy.exit_order must be 'market' or 'limit'")
     if int(s.get("volatility_window", 48)) < 2:
         raise ValueError("strategy.volatility_window must be at least 2")
-    if any(float(x) < 0 for x in s.get("volatility_filters_bps", [])) or float(s.get("min_volatility_bps", 0)) < 0:
-        raise ValueError("strategy volatility floors must be nonnegative")
+    if float(s.get("min_volatility_bps", 0)) < 0:
+        raise ValueError("strategy.min_volatility_bps must be nonnegative")
+    searchable = {"min_volatility_bps", "trailing_stop", "stop_loss", "take_profit", "min_hold_bars",
+                  "cooldown_bars", "max_hold_bars", "exit_bps"}
+    for key, values in s.get("search", {}).items():
+        if key not in searchable or not isinstance(values, list) or not values:
+            raise ValueError(f"strategy.search.{key} must be a non-empty list of a searchable key")
+        for value in values:
+            if key == "stop_loss" and not 0 < value < 1:
+                raise ValueError("strategy.search.stop_loss values must be within (0, 1)")
+            if key == "trailing_stop" and not 0 <= value < 1:
+                raise ValueError("strategy.search.trailing_stop values must be within [0, 1)")
+            if key == "min_volatility_bps" and value < 0:
+                raise ValueError("strategy.search.min_volatility_bps values must be nonnegative")
     if not 0 <= float(s.get("limit_offset_bps", 0)) < 100:
         raise ValueError("strategy.limit_offset_bps must be within [0, 100)")
     if not 0 <= float(s.get("trailing_stop", 0)) < 1:
