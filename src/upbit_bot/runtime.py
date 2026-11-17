@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import os
@@ -54,7 +55,7 @@ class Bundle:
     def infer(self, api, end):
         """Returns (predictions_bps, closes, uncertainty_bps) for the last closed candle."""
         m = self.manifest
-        x, closes, missing = [], {}, set()
+        x, closes, lows, missing = [], {}, {}, set()
         count = m["lookback"] + self.warmup + 12
         for i, market in enumerate(m["markets"]):
             rows, before = [], end
@@ -83,6 +84,7 @@ class Bundle:
                 raise ValueError(f"{market}: incomplete features")
             x.append(model_input(window, m["scaler"], i, len(m["markets"])))
             closes[market] = float(frame["close"].iloc[-1])
+            lows[market] = float(frame["low"].iloc[-1]) if market not in missing else math.inf
         outputs = self.session.run(None, {"features": np.stack(x)})
         pred = outputs[0].reshape(-1)
         # Schema-1 bundles are single models without an uncertainty output.
@@ -92,10 +94,19 @@ class Bundle:
         pred = dict(zip(m["markets"], map(float, pred)))
         for market in missing:
             pred[market] = float("nan")
-        return pred, closes, dict(zip(m["markets"], map(float, spread)))
+        return pred, closes, dict(zip(m["markets"], map(float, spread))), lows
 
 
-def reconcile(api, state):
+def limit_payload(row):
+    try:
+        return json.loads(row["payload"]).get("ord_type") == "limit"
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
+def reconcile(api, state, bar=None):
+    """Apply finished orders. A resting limit buy from an earlier bar is cancelled (its signal has
+    expired, matching the backtest's one-bar fill window) and its partial fill, if any, applied."""
     for row in state.pending():
         try:
             order = api.order(row["id"])
@@ -111,7 +122,20 @@ def reconcile(api, state):
         ):
             raise ValueError("Order reconciliation identity mismatch")
         if order["state"] not in ("done", "cancel"):
-            return False
+            if bar is None or row["bar"] >= bar or not limit_payload(row):
+                return False
+            try:
+                api.cancel(row["id"])
+            except APIError as exc:
+                # Filled or cancelled in the meantime; the lookup below decides.
+                LOG.warning("cancel %s: %s", row["id"], exc)
+            for _ in range(5):
+                order = api.order(row["id"])
+                if order["state"] in ("done", "cancel"):
+                    break
+                time.sleep(1)
+            else:
+                return False
         qty = float(order.get("executed_volume", 0))
         trades = order.get("trades", [])
         funds = sum(float(t["funds"]) for t in trades)
@@ -120,6 +144,21 @@ def reconcile(api, state):
             raise ValueError("Trade details incomplete; cannot reconcile inventory")
         state.apply_fill(row["id"], qty, funds, float(order.get("paid_fee", 0)), order)
     return not state.pending()
+
+
+def resolve_paper_limits(state, lows, bar):
+    """Paper limit buys fill only if the next bar traded strictly below the bid, like the backtest."""
+    for row in state.pending():
+        payload = json.loads(row["payload"])
+        if not payload.get("paper") or row["bar"] >= bar:
+            continue
+        price, amount, fee = float(payload["price"]), float(payload["amount"]), float(payload["fee"])
+        low = lows.get(row["market"], math.inf)
+        if row["bar"] + 1 == bar and math.isfinite(low) and low < price:
+            state.apply_fill(row["id"], amount / price, amount, amount * fee, {"paper": True, "filled": True})
+        else:
+            state.apply_fill(row["id"], 0.0, 0.0, 0.0, {"paper": True, "filled": False})
+            LOG.info("paper limit %s %s not filled; cancelled", row["market"], row["id"])
 
 
 def book_prices(book, now):
@@ -152,7 +191,8 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
     m, r = bundle.manifest, cfg["runtime"]
     # Daily LLM/manual policy, re-validated against the evaluated strategy on every cycle.
     s, params, policy_info = effective_policy(cfg, m, state_dir, now)
-    if mode == "live" and not reconcile(api, state):
+    current_bar = int(pd.Timestamp(now).floor("5min").timestamp() // 300) - 1
+    if mode == "live" and not reconcile(api, state, current_bar):
         return {"status": "waiting_for_fill"}
     if (Path(state_dir) / "STOP").exists():
         return {"status": "stopped", "note": "STOP disables orders, including liquidation"}
@@ -163,6 +203,10 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
     inferred = bundle.infer(api, end)
     pred, closes = inferred[0], inferred[1]
     uncertainty = inferred[2] if len(inferred) > 2 else dict.fromkeys(pred, 0.0)
+    lows = inferred[3] if len(inferred) > 3 else {}
+    if mode == "paper":
+        resolve_paper_limits(state, lows, bar)
+    limit_entry = s.get("entry_order", "market") == "limit"
     # Penalize ensemble disagreement: uncertain forecasts need a larger edge to enter.
     signal = {k: v - params["uncertainty_penalty"] * uncertainty.get(k, 0.0) for k, v in pred.items()}
     if utcnow().timestamp() - (end.timestamp() - 300) > r["max_candle_age_seconds"]:
@@ -211,6 +255,7 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
             decision, reason = "sell", "risk_halt"
         decisions.append((decision, market, value if math.isfinite(value) else 0.0, reason))
     actions = []
+    reserved = 0.0  # cash committed to resting paper limit buys placed this cycle
     for decision, market, value, reason in sorted(decisions, key=lambda x: order_key(x[0], x[1], x[2])):
         if decision != "hold":
             actions.append({"market": market, "decision": decision, "reason": reason})
@@ -230,7 +275,7 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
         p = positions.get(market)
         fee = s["fee_rate"]
         minimum = s["min_order_krw"]
-        available_cash = state.get("cash")
+        available_cash = state.get("cash") - reserved
         available_qty = p["qty"] if p else 0.0
         max_total = float("inf")
         if mode == "live":
@@ -240,7 +285,8 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
             fee = float(chance["bid_fee"] if decision == "buy" else chance["ask_fee"])
             side_name = "bid" if decision == "buy" else "ask"
             supported = chance["market"].get(f"{side_name}_types", [])
-            if ("price" if decision == "buy" else "market") not in supported:
+            wanted = ("limit" if limit_entry else "price") if decision == "buy" else "market"
+            if wanted not in supported:
                 raise ValueError("Market order type unavailable")
             minimum = max(minimum, float(chance["market"][side_name]["min_total"]))
             max_total = float(chance["market"].get("max_total") or "inf")
@@ -261,7 +307,7 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
         )
         payload = {"market": market, "side": "bid" if decision == "buy" else "ask", "identifier": identifier}
         if decision == "buy":
-            exposure = sum(v["qty"] * closes[k] for k, v in positions.items())
+            exposure = sum(v["qty"] * closes[k] for k, v in positions.items()) + reserved
             amount = min(
                 equity * s["position_fraction"],
                 equity * s["max_exposure"] - exposure,
@@ -274,9 +320,17 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
                 continue
             if float(book["orderbook_units"][0]["ask_size"]) * ask < amount:
                 continue
-            payload.update(ord_type="price", price=str(amount))
-            price = ask * (1 + s["slippage_bps"] / 10000)
-            qty, funds = amount / price, float(amount)
+            if limit_entry:
+                # Rest at the best bid: no spread or slippage paid. Cancelled next cycle if unfilled.
+                volume = Decimal(str(amount / bid)).quantize(Decimal("0.00000001"), rounding=ROUND_DOWN)
+                price_text = format(Decimal(str(bid)).normalize(), "f")
+                payload.update(ord_type="limit", price=price_text, volume=f"{volume:f}")
+                qty, funds = float(volume), float(volume) * bid
+                paper = {"paper": True, "price": bid, "amount": funds, "fee": fee}
+            else:
+                payload.update(ord_type="price", price=str(amount))
+                price = ask * (1 + s["slippage_bps"] / 10000)
+                qty, funds = amount / price, float(amount)
         else:
             if not p:
                 continue
@@ -288,6 +342,11 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
                 raise ValueError("Sell exceeds exchange maximum")
             payload.update(ord_type="market", volume=f"{qty:.8f}")
             funds = qty * bid * (1 - s["slippage_bps"] / 10000)
+        if mode == "paper" and decision == "buy" and limit_entry:
+            state.intent(identifier, market, decision, bar, {**payload, **paper})
+            reserved += funds * (1 + fee)
+            LOG.info("paper limit buy %s @ %s resting until next bar", market, bid)
+            continue
         state.intent(identifier, market, decision, bar, payload)
         if mode == "paper":
             state.apply_fill(identifier, qty, funds, funds * fee, {"paper": True})
@@ -389,4 +448,4 @@ def status(state_dir):
     path = Path(state_dir) / "health.json"
     result = read_json(path)
     age = (utcnow() - datetime.fromisoformat(result["at"])).total_seconds()
-    return {**result, "heartbeat_age_seconds": age, "healthy": age < 660 and result["status"] == "ok"}
+    return {**result, "heartbeat_age_seconds": age, "healthy": age < 660 and result["status"] in ("ok", "waiting_for_fill")}

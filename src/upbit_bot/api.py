@@ -47,7 +47,7 @@ class Upbit:
                     self.base + path,
                     headers=headers,
                     timeout=(5, 20),
-                    **({"params": params} if method == "GET" else {"json": params}),
+                    **({"params": params} if method in ("GET", "DELETE") else {"json": params}),
                 )
             except (requests.Timeout, requests.ConnectionError):
                 if method != "GET" or attempt == attempts - 1:
@@ -96,6 +96,10 @@ class Upbit:
 
     def order(self, identifier):
         return self.request("GET", "/v1/order", {"identifier": identifier}, private=True)
+
+    def cancel(self, identifier):
+        """Not retried, like POST: an unknown outcome is resolved by the next order lookup."""
+        return self.request("DELETE", "/v1/order", {"identifier": identifier}, private=True)
 
     def submit(self, payload):
         return self.request("POST", "/v1/orders", payload, private=True)

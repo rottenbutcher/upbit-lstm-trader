@@ -37,11 +37,19 @@ def metrics(equity, trades, initial):
 
 
 def simulate(frames, predictions, strategy, threshold, initial=100000.0, max_order=float("inf")):
-    """Close[t] decision, open[t+1] fill. No intrabar stop-fill assumptions."""
+    """Close[t] decision, open[t+1] fill. No intrabar stop-fill assumptions.
+
+    ``entry_order = "limit"``: buys rest at close[t] x (1 - limit_offset_bps) for one bar and fill
+    only if bar t+1 trades strictly below that price (touching is not enough: queue position is
+    unknown). Unfilled signals are lost, exactly as the runtime cancels them. Sells stay market.
+    """
     times = sorted(set().union(*(set(p.index) for p in predictions.values())))
     cash, positions, marks, trades, equity, last_stop = initial, {}, {}, [], [], {}
     peak, day, day_start, daily_halt, halted = initial, None, initial, False, False
     fee, slip = strategy["fee_rate"], strategy["slippage_bps"] / 10000
+    limit_entry = strategy.get("entry_order", "market") == "limit"
+    offset = float(strategy.get("limit_offset_bps", 0.0)) / 10000
+    missed = 0
     arrays = {m: f.to_dict("index") for m, f in frames.items()}
     for ts in times:
         executable = {}
@@ -59,6 +67,7 @@ def simulate(frames, predictions, strategy, threshold, initial=100000.0, max_ord
         daily_halt = daily_halt or eq < day_start * (1 - strategy["daily_loss_limit"])
         halted = halted or eq < peak * (1 - strategy["max_drawdown"])
         intents = []
+        row_close = {m: v[0]["close"] for m, v in executable.items()}
         bar = int(ts.timestamp() // 300)
         for market, p in positions.items():
             if market in executable:
@@ -104,8 +113,16 @@ def simulate(frames, predictions, strategy, threshold, initial=100000.0, max_ord
                 )
                 if amount < strategy["min_order_krw"]:
                     continue
+                if limit_entry:
+                    limit = row_close[market] * (1 - offset)
+                    if not nxt.get("low", np.inf) < limit:
+                        missed += 1
+                        continue
+                    # A bar opening below the bid makes the order marketable at about the open.
+                    price = min(limit, nxt["open"] * (1 + slip))
+                else:
+                    price = nxt["open"] * (1 + slip)
                 cash -= amount * (1 + fee)
-                price = nxt["open"] * (1 + slip)
                 positions[market] = {
                     "qty": amount / price,
                     "entry": price,
@@ -128,8 +145,11 @@ def simulate(frames, predictions, strategy, threshold, initial=100000.0, max_ord
                 {"market": market, "time": equity[-1][0].isoformat(), "pnl": proceeds - p["cost"], "reason": "end"}
             )
         equity[-1] = (equity[-1][0], cash)
+    result_metrics = metrics(equity, trades, initial)
+    if limit_entry:
+        result_metrics["missed_limit_entries"] = missed
     return {
-        "metrics": metrics(equity, trades, initial),
+        "metrics": result_metrics,
         "trades": trades,
         "equity": [(t.isoformat(), e) for t, e in equity],
     }

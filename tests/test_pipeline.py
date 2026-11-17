@@ -89,7 +89,8 @@ def test_train_export_and_package(tmp_path):
             ]
             return rows[::-1]
 
-    pred, closes, spread = bundle.infer(CandleAPI(), end)
+    pred, closes, spread, lows = bundle.infer(CandleAPI(), end)
+    assert lows["KRW-BTC"] == pytest.approx(raw["low"].iloc[-1]) and lows["KRW-ETH"] == np.inf
     assert np.isfinite(pred["KRW-BTC"]) and np.isnan(pred["KRW-ETH"])
     assert closes["KRW-ETH"] == pytest.approx(raw["close"].iloc[-2])
     # Mismatched model bytes must fail before any inference/order.

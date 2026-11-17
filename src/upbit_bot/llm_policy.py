@@ -35,7 +35,7 @@ DEFAULT_LLM = {
 TOOL_NAME = "set_trading_policy"
 
 SYSTEM_PROMPT = """You are the daily risk and regime analyst for a small, automated Upbit (KRW) spot \
-crypto strategy. A separately trained LSTM ensemble forecasts 30-minute returns every 5 minutes; \
+crypto strategy. A separately trained LSTM ensemble forecasts short-horizon returns every 5 minutes; \
 you do not predict prices. Once per day you set the strategy parameters for the next ~24 hours.
 
 Decide using the macro indicators, official central-bank/regulator/statistics releases, crypto \

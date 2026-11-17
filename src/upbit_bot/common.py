@@ -35,6 +35,10 @@ def load_config(path="config.toml"):
         raise ValueError("training.lr_schedule must be 'constant' or 'cosine'")
     if t.get("early_stop_metric", "mae") not in ("mae", "ic"):
         raise ValueError("training.early_stop_metric must be 'mae' or 'ic'")
+    if s.get("entry_order", "market") not in ("market", "limit"):
+        raise ValueError("strategy.entry_order must be 'market' or 'limit'")
+    if not 0 <= float(s.get("limit_offset_bps", 0)) < 100:
+        raise ValueError("strategy.limit_offset_bps must be within [0, 100)")
     if not 0 <= float(s.get("trailing_stop", 0)) < 1:
         raise ValueError("strategy.trailing_stop must be within [0, 1)")
     for key in ("min_hold_bars", "cooldown_bars"):
