@@ -69,6 +69,25 @@ def validation_score(pred, y, metric):
     return float(np.mean(np.abs(pred - y)))
 
 
+def threshold_candidates(cfg, validation_predictions):
+    """Fixed bps levels plus upper quantiles of the validation forecasts. Regression forecasts are
+    shrunk toward 0, so fixed levels alone can sit above almost every prediction (zero trades)."""
+    levels = [float(x) for x in cfg["strategy"]["entry_thresholds_bps"]]
+    quantiles = cfg["strategy"].get("entry_quantiles", [])
+    if quantiles:
+        pooled = np.concatenate([p.to_numpy() for p in validation_predictions.values()])
+        if len(pooled):
+            levels += [round(float(np.quantile(pooled, q)), 2) for q in quantiles]
+    # Below zero the rule would buy forecasts of a loss.
+    return sorted({x for x in levels if x > 0})
+
+
+def selection_key(result, gate):
+    """Enough trades first (a 1-trade Sharpe is noise), then Sharpe, then profit factor."""
+    m = result["metrics"]
+    return (m["trades"] >= gate["min_trades"], m["sharpe_daily"], m["profit_factor"])
+
+
 def model_settings(cfg):
     """Model options with defaults that keep older config files valid."""
     mc = cfg["model"]
@@ -474,7 +493,7 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
                 frames[i].index[indexes[0]] : frames[i].index[min(indexes[-1] + 1, len(frames[i]) - 1)]
             ]
     results = []
-    for threshold in cfg["strategy"]["entry_thresholds_bps"]:
+    for threshold in threshold_candidates(cfg, predictions["val"]):
         result = simulate(
             sim_frames["val"],
             predictions["val"],
@@ -487,10 +506,7 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
     candidates = [(th, r) for th, r in results if passed(r, cfg["gate"])]
     # Max-return selection picks the luckiest threshold. Risk-adjusted return is less fragile;
     # profit factor breaks ties.
-    threshold, validation = max(
-        candidates or results,
-        key=lambda item: (item[1]["metrics"]["sharpe_daily"], item[1]["metrics"]["profit_factor"]),
-    )
+    threshold, validation = max(candidates or results, key=lambda item: selection_key(item[1], cfg["gate"]))
     test = simulate(
         sim_frames["test"],
         predictions["test"],

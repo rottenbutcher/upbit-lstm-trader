@@ -63,10 +63,13 @@ def compare(cfg, data="data", output="artifacts/compare", candidates=DEFAULT_CAN
             LOG.exception("candidate %s failed", name)
             failures[name] = f"{type(exc).__name__}: {exc}"
     # Validation-only ranking: risk-adjusted trading result first, forecast skill second.
-    rows.sort(key=lambda r: (r["val_sharpe"], r["val_rank_ic"] or 0), reverse=True)
+    min_trades = cfg["gate"]["min_trades"]
+    rows.sort(
+        key=lambda r: (r["val_trades"] >= min_trades, r["val_sharpe"], r["val_rank_ic"] or 0), reverse=True
+    )
     result = {
         "created_at": utcnow().isoformat(),
-        "ranking_basis": "validation sharpe, then validation rank IC (test not used for selection)",
+        "ranking_basis": "enough validation trades, then validation sharpe, then rank IC (test not used)",
         "ranking": rows,
         "failures": failures,
         "recommended": next((r["candidate"] for r in rows if r["approved_for_live"]), None),

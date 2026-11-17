@@ -170,3 +170,17 @@ def test_stop_loss_sells_through_wide_spread_and_sets_cooldown(env):
     process_cycle(cfg, b, Book(bid=10000, ask=10030), state, "paper", path, NOW)
     assert "KRW-BTC" not in state.positions()
     assert state.last_stop("KRW-BTC") == BAR
+
+
+def test_threshold_candidates_and_selection_key():
+    from upbit_bot.train import selection_key, threshold_candidates
+
+    cfg = {"strategy": {"entry_thresholds_bps": [20.0, 90.0], "entry_quantiles": [0.5, 0.99]}}
+    preds = {"A": pd.Series(np.arange(-50, 51, dtype=float))}
+    levels = threshold_candidates(cfg, preds)
+    assert 20.0 in levels and 90.0 in levels and max(levels) == 90.0
+    assert any(48 < x < 50 for x in levels) and all(x > 0 for x in levels)  # median 0 dropped
+    gate = {"min_trades": 30}
+    lucky = {"metrics": {"trades": 1, "sharpe_daily": 5.0, "profit_factor": 999}}
+    solid = {"metrics": {"trades": 80, "sharpe_daily": 1.0, "profit_factor": 1.2}}
+    assert max([lucky, solid], key=lambda r: selection_key(r, gate)) is solid
