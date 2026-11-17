@@ -21,7 +21,7 @@ from .data import candle_frame, iso
 from .features import WARMUP, feature_frame, feature_list, model_input
 from .policy import effective as effective_policy
 from .state import State
-from .strategy import STOP_REASONS, decide, order_key
+from .strategy import LIMIT_EXIT_REASONS, STOP_REASONS, decide, order_key, volatility_bps
 
 LOG = logging.getLogger(__name__)
 # A market with no candle for this many bars is treated as an outage, not a quiet period.
@@ -55,7 +55,7 @@ class Bundle:
     def infer(self, api, end):
         """Returns (predictions_bps, closes, uncertainty_bps) for the last closed candle."""
         m = self.manifest
-        x, closes, lows, missing = [], {}, {}, set()
+        x, closes, bars, missing = [], {}, {}, set()
         count = m["lookback"] + self.warmup + 12
         for i, market in enumerate(m["markets"]):
             rows, before = [], end
@@ -84,7 +84,12 @@ class Bundle:
                 raise ValueError(f"{market}: incomplete features")
             x.append(model_input(window, m["scaler"], i, len(m["markets"])))
             closes[market] = float(frame["close"].iloc[-1])
-            lows[market] = float(frame["low"].iloc[-1]) if market not in missing else math.inf
+            window = int(m["strategy"].get("volatility_window", 48))
+            bars[market] = {
+                "low": float(frame["low"].iloc[-1]) if market not in missing else math.inf,
+                "high": float(frame["high"].iloc[-1]) if market not in missing else -math.inf,
+                "volatility_bps": volatility_bps(frame["close"].to_numpy(), window),
+            }
         outputs = self.session.run(None, {"features": np.stack(x)})
         pred = outputs[0].reshape(-1)
         # Schema-1 bundles are single models without an uncertainty output.
@@ -94,7 +99,7 @@ class Bundle:
         pred = dict(zip(m["markets"], map(float, pred)))
         for market in missing:
             pred[market] = float("nan")
-        return pred, closes, dict(zip(m["markets"], map(float, spread))), lows
+        return pred, closes, dict(zip(m["markets"], map(float, spread))), bars
 
 
 def limit_payload(row):
@@ -143,22 +148,37 @@ def reconcile(api, state, bar=None):
         if abs(traded_qty - qty) > max(1e-10, qty * 1e-7):
             raise ValueError("Trade details incomplete; cannot reconcile inventory")
         state.apply_fill(row["id"], qty, funds, float(order.get("paid_fee", 0)), order)
+        if row["side"] == "sell" and order["state"] == "cancel" and limit_payload(row):
+            with state.db:
+                state.set(f"exit_fallback:{row['market']}", True)
     return not state.pending()
 
 
-def resolve_paper_limits(state, lows, bar):
-    """Paper limit buys fill only if the next bar traded strictly below the bid, like the backtest."""
+def resolve_paper_limits(state, bars, bar):
+    """Paper limit orders fill only if the next bar traded strictly through the price, like the
+    backtest: buys need low < bid, sells need high > ask. Otherwise they are cancelled."""
     for row in state.pending():
         payload = json.loads(row["payload"])
         if not payload.get("paper") or row["bar"] >= bar:
             continue
-        price, amount, fee = float(payload["price"]), float(payload["amount"]), float(payload["fee"])
-        low = lows.get(row["market"], math.inf)
-        if row["bar"] + 1 == bar and math.isfinite(low) and low < price:
-            state.apply_fill(row["id"], amount / price, amount, amount * fee, {"paper": True, "filled": True})
+        info = bars.get(row["market"], {})
+        price, fee = float(payload["price"]), float(payload["fee"])
+        next_bar = row["bar"] + 1 == bar
+        if row["side"] == "buy":
+            amount = float(payload["amount"])
+            if next_bar and info.get("low", math.inf) < price:
+                state.apply_fill(row["id"], amount / price, amount, amount * fee, {"paper": True, "filled": True})
+                continue
         else:
-            state.apply_fill(row["id"], 0.0, 0.0, 0.0, {"paper": True, "filled": False})
-            LOG.info("paper limit %s %s not filled; cancelled", row["market"], row["id"])
+            qty = float(payload["volume"])
+            if next_bar and info.get("high", -math.inf) > price:
+                funds = qty * price
+                state.apply_fill(row["id"], qty, funds, funds * fee, {"paper": True, "filled": True})
+                continue
+            with state.db:
+                state.set(f"exit_fallback:{row['market']}", True)
+        state.apply_fill(row["id"], 0.0, 0.0, 0.0, {"paper": True, "filled": False})
+        LOG.info("paper limit %s %s not filled; cancelled", row["side"], row["market"])
 
 
 def book_prices(book, now):
@@ -203,10 +223,11 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
     inferred = bundle.infer(api, end)
     pred, closes = inferred[0], inferred[1]
     uncertainty = inferred[2] if len(inferred) > 2 else dict.fromkeys(pred, 0.0)
-    lows = inferred[3] if len(inferred) > 3 else {}
+    bars = inferred[3] if len(inferred) > 3 else {}
     if mode == "paper":
-        resolve_paper_limits(state, lows, bar)
+        resolve_paper_limits(state, bars, bar)
     limit_entry = s.get("entry_order", "market") == "limit"
+    limit_exit = s.get("exit_order", "market") == "limit"
     # Penalize ensemble disagreement: uncertain forecasts need a larger edge to enter.
     signal = {k: v - params["uncertainty_penalty"] * uncertainty.get(k, 0.0) for k, v in pred.items()}
     if utcnow().timestamp() - (end.timestamp() - 300) > r["max_candle_age_seconds"]:
@@ -240,10 +261,14 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
         if p and p["qty"] * closes[market] < minimum:
             # Unsellable dust is not a position: it must not block new entries in this market.
             p = None
+        if not p and state.get(f"exit_fallback:{market}"):
+            with state.db:
+                state.set(f"exit_fallback:{market}", False)
         value = signal[market]
         if math.isfinite(value):
             decision, reason = decide(
-                value, p, closes[market], bar, s, params["threshold_bps"], state.last_stop(market)
+                value, p, closes[market], bar, s, params["threshold_bps"], state.last_stop(market),
+                bars.get(market, {}).get("volatility_bps"),
             )
         elif p:
             decision, reason = decide(float("inf"), p, closes[market], bar, s, float("inf"))
@@ -277,6 +302,13 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
         minimum = s["min_order_krw"]
         available_cash = state.get("cash") - reserved
         available_qty = p["qty"] if p else 0.0
+        # Non-urgent exits rest at the best ask once; if that misses, the next exit is a market order.
+        limit_sell = (
+            decision == "sell"
+            and limit_exit
+            and reason in LIMIT_EXIT_REASONS
+            and not state.get(f"exit_fallback:{market}")
+        )
         max_total = float("inf")
         if mode == "live":
             chance = api.chance(market)
@@ -285,7 +317,9 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
             fee = float(chance["bid_fee"] if decision == "buy" else chance["ask_fee"])
             side_name = "bid" if decision == "buy" else "ask"
             supported = chance["market"].get(f"{side_name}_types", [])
-            wanted = ("limit" if limit_entry else "price") if decision == "buy" else "market"
+            wanted = (
+                ("limit" if limit_entry else "price") if decision == "buy" else ("limit" if limit_sell else "market")
+            )
             if wanted not in supported:
                 raise ValueError("Market order type unavailable")
             minimum = max(minimum, float(chance["market"][side_name]["min_total"]))
@@ -340,12 +374,19 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
                 continue
             if qty * bid > max_total:
                 raise ValueError("Sell exceeds exchange maximum")
-            payload.update(ord_type="market", volume=f"{qty:.8f}")
-            funds = qty * bid * (1 - s["slippage_bps"] / 10000)
-        if mode == "paper" and decision == "buy" and limit_entry:
+            if limit_sell:
+                price_text = format(Decimal(str(ask)).normalize(), "f")
+                payload.update(ord_type="limit", price=price_text, volume=f"{qty:.8f}")
+                funds = qty * ask
+                paper = {"paper": True, "price": ask, "fee": fee}
+            else:
+                payload.update(ord_type="market", volume=f"{qty:.8f}")
+                funds = qty * bid * (1 - s["slippage_bps"] / 10000)
+        if mode == "paper" and ((decision == "buy" and limit_entry) or limit_sell):
             state.intent(identifier, market, decision, bar, {**payload, **paper})
-            reserved += funds * (1 + fee)
-            LOG.info("paper limit buy %s @ %s resting until next bar", market, bid)
+            if decision == "buy":
+                reserved += funds * (1 + fee)
+            LOG.info("paper limit %s %s resting until next bar", decision, market)
             continue
         state.intent(identifier, market, decision, bar, payload)
         if mode == "paper":

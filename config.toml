@@ -6,9 +6,9 @@ minimum_days = 365
 
 [model]
 lookback = 96
-# Forecast horizon in 5-minute bars (12 = 60 minutes). Longer horizons give the forecast more room
+# Forecast horizon in 5-minute bars (24 = 2 hours). Longer horizons give the forecast more room
 # to clear round-trip costs; changing it requires retraining.
-horizon = 12
+horizon = 24
 hidden = 64
 layers = 2
 dropout = 0.15
@@ -60,14 +60,21 @@ entry_thresholds_bps = [20.0, 30.0, 45.0, 60.0, 90.0]
 # Also try these upper quantiles of the validation forecasts as thresholds (scale-free).
 entry_quantiles = [0.90, 0.95, 0.98, 0.99]
 exit_bps = 0.0
-max_hold_bars = 24
+max_hold_bars = 48
 stop_loss = 0.02
 take_profit = 0.04
 # "limit": buys rest at the best bid for one bar and are cancelled if unfilled (no spread or
 # slippage paid; the backtest fills only when the next bar trades below the bid).
 # "market": previous behavior. Sells are always market orders.
 entry_order = "limit"
+# Forecast / max-hold / take-profit exits rest at the best ask for one bar; a miss falls back to a
+# market order on the next exit. Stops and loss halts are always market orders.
+exit_order = "limit"
 limit_offset_bps = 0.0
+# Enter only when 5-minute return volatility over volatility_window bars is high enough. Training
+# tries each floor below with every threshold and keeps the best on validation (0 = no filter).
+volatility_window = 48
+volatility_filters_bps = [0.0, 15.0, 25.0, 35.0]
 # Exit when price falls this far below the best close since entry (0 = off). Locks in gains.
 trailing_stop = 0.012
 # Forecast-driven exits wait this many bars; stops/take-profit never wait (0 = off).

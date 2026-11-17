@@ -60,7 +60,7 @@ def bundle(cfg, pred, low):
                 "approved_for_live": True, "threshold_bps": 20, "markets": ["KRW-BTC"], "model_sha256": "abc"}
     return SimpleNamespace(manifest=manifest, report={"approved_for_live": True},
                            infer=lambda api, end: ({"KRW-BTC": pred}, {"KRW-BTC": 10000.0}, {"KRW-BTC": 0.0},
-                                                   {"KRW-BTC": low}))
+                                                   {"KRW-BTC": {"low": low, "high": 10001.0, "volatility_bps": 30.0}}))
 
 
 @pytest.mark.parametrize(("low", "filled"), [(9999.0, True), (10000.0, False)])
@@ -135,3 +135,76 @@ def test_cancel_uses_query_params_and_no_retry():
         api.cancel("ul-x")
     assert calls == [("DELETE", {"params": {"identifier": "ul-x"}})]
     assert json.dumps(calls)
+
+
+def test_volatility_gate_blocks_quiet_entries():
+    from upbit_bot.strategy import decide
+
+    s = limit_strategy(min_volatility_bps=20.0)
+    assert decide(100, None, 100, 1, s, 20, volatility=10.0) == ("hold", "low_volatility")
+    assert decide(100, None, 100, 1, s, 20, volatility=float("nan")) == ("hold", "low_volatility")
+    assert decide(100, None, 100, 1, s, 20, volatility=25.0) == ("buy", "signal")
+    assert decide(100, None, 100, 1, limit_strategy(), 20, volatility=None) == ("buy", "signal")
+
+
+def test_volatility_bps_matches_pandas():
+    import numpy as np
+
+    from upbit_bot.strategy import volatility_bps
+
+    closes = 100 * np.exp(np.cumsum(np.random.default_rng(1).normal(0, 0.002, 200)))
+    expected = pd.Series(np.log(closes)).diff().rolling(48).std().iloc[-1] * 10000
+    assert volatility_bps(closes, 48) == pytest.approx(expected)
+    assert np.isnan(volatility_bps(closes[:10], 48))
+
+
+def exit_frame(highs):
+    index = pd.date_range("2024-01-01", periods=len(highs), freq="5min", tz="UTC")
+    return pd.DataFrame({"open": 100.0, "high": highs, "low": 99.0, "close": 100.0, "observed": 1}, index=index)
+
+
+def test_backtest_limit_exit_fills_through_or_falls_back_to_market():
+    s = limit_strategy(entry_order="market", exit_order="limit", position_fraction=0.5, max_exposure=0.5,
+                       slippage_bps=10.0)
+    # Buy on bar 0 (forecast 100), forecast exit on bar 1.
+    pred = pd.Series([100.0, -50.0, -50.0], index=exit_frame([100.0] * 4).index[:3])
+    through = simulate({"KRW-A": exit_frame([100.0, 100.0, 100.1, 100.0])}, {"KRW-A": pred}, s, 20)
+    assert through["trades"][0]["reason"] == "forecast"
+    assert through["metrics"]["missed_limit_exits"] == 0
+    missed = simulate({"KRW-A": exit_frame([100.0] * 4)}, {"KRW-A": pred}, s, 20)
+    assert missed["metrics"]["missed_limit_exits"] == 1
+    # Fallback market sell pays slippage, the limit exit does not.
+    assert missed["trades"][0]["pnl"] < through["trades"][0]["pnl"]
+
+
+@pytest.mark.parametrize(("high", "filled"), [(10002.0, True), (10001.0, False)])
+def test_paper_limit_sell_rests_then_fills_or_flags_fallback(tmp_path, monkeypatch, high, filled):
+    cfg = load_config()
+    clock = {"now": NOW}
+    monkeypatch.setattr("upbit_bot.runtime.utcnow", lambda: clock["now"])
+    state = State(tmp_path / "s.sqlite", 100000, "paper")
+    with state.db:
+        state.db.execute(
+            "INSERT INTO positions (market,qty,entry,cost,bar,peak) VALUES ('KRW-BTC',1,10000,10000,0,10000)"
+        )
+        state.set("cash", 90000)
+    api = Paper()
+    api.now = NOW
+
+    def b(pred, high):
+        bundle_ = bundle(cfg, pred, 9990.0)
+        bundle_.manifest["strategy"]["exit_order"] = "limit"
+        bundle_.infer = lambda api_, end: ({"KRW-BTC": pred}, {"KRW-BTC": 10000.0}, {"KRW-BTC": 0.0},
+                                          {"KRW-BTC": {"low": 9990.0, "high": high, "volatility_bps": 30.0}})
+        return bundle_
+
+    process_cycle(cfg, b(-100.0, 10000.0), api, state, "paper", tmp_path, NOW)
+    assert len(state.pending()) == 1 and "KRW-BTC" in state.positions()
+    later = NOW + timedelta(minutes=5)
+    clock["now"] = api.now = later
+    process_cycle(cfg, b(0.0, high), api, state, "paper", tmp_path, later)
+    # Filled at the ask, or missed and then closed by the market-order fallback in the same cycle.
+    assert "KRW-BTC" not in state.positions()
+    orders = [json.loads(r[0])["ord_type"] for r in state.db.execute("SELECT payload FROM intents ORDER BY rowid")]
+    assert orders == (["limit"] if filled else ["limit", "market"])
+    state.close()

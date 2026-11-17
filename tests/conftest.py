@@ -12,6 +12,7 @@ def market_entries_by_default(monkeypatch):
     def load(path="config.toml"):
         cfg = _load(path)
         cfg["strategy"]["entry_order"] = "market"
+        cfg["strategy"]["exit_order"] = "market"
         return cfg
 
     monkeypatch.setattr(common, "load_config", load)

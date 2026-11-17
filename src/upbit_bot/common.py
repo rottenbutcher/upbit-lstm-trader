@@ -37,6 +37,12 @@ def load_config(path="config.toml"):
         raise ValueError("training.early_stop_metric must be 'mae' or 'ic'")
     if s.get("entry_order", "market") not in ("market", "limit"):
         raise ValueError("strategy.entry_order must be 'market' or 'limit'")
+    if s.get("exit_order", "market") not in ("market", "limit"):
+        raise ValueError("strategy.exit_order must be 'market' or 'limit'")
+    if int(s.get("volatility_window", 48)) < 2:
+        raise ValueError("strategy.volatility_window must be at least 2")
+    if any(float(x) < 0 for x in s.get("volatility_filters_bps", [])) or float(s.get("min_volatility_bps", 0)) < 0:
+        raise ValueError("strategy volatility floors must be nonnegative")
     if not 0 <= float(s.get("limit_offset_bps", 0)) < 100:
         raise ValueError("strategy.limit_offset_bps must be within [0, 100)")
     if not 0 <= float(s.get("trailing_stop", 0)) < 1:

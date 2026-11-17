@@ -493,24 +493,29 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
                 frames[i].index[indexes[0]] : frames[i].index[min(indexes[-1] + 1, len(frames[i]) - 1)]
             ]
     results = []
-    for threshold in threshold_candidates(cfg, predictions["val"]):
-        result = simulate(
-            sim_frames["val"],
-            predictions["val"],
-            cfg["strategy"],
-            threshold,
-            cfg["runtime"]["capital_krw"],
-            max_order=cfg["runtime"]["max_order_krw"],
-        )
-        results.append((threshold, result))
-    candidates = [(th, r) for th, r in results if passed(r, cfg["gate"])]
-    # Max-return selection picks the luckiest threshold. Risk-adjusted return is less fragile;
-    # profit factor breaks ties.
-    threshold, validation = max(candidates or results, key=lambda item: selection_key(item[1], cfg["gate"]))
+    floors = cfg["strategy"].get("volatility_filters_bps") or [cfg["strategy"].get("min_volatility_bps", 0.0)]
+    for floor in floors:
+        strategy = {**cfg["strategy"], "min_volatility_bps": float(floor)}
+        for threshold in threshold_candidates(cfg, predictions["val"]):
+            result = simulate(
+                sim_frames["val"],
+                predictions["val"],
+                strategy,
+                threshold,
+                cfg["runtime"]["capital_krw"],
+                max_order=cfg["runtime"]["max_order_krw"],
+            )
+            results.append((threshold, strategy, result))
+    candidates = [item for item in results if passed(item[2], cfg["gate"])]
+    # Enough trades first, then risk-adjusted return (max return picks the luckiest setting).
+    threshold, chosen, validation = max(
+        candidates or results, key=lambda item: selection_key(item[2], cfg["gate"])
+    )
+    LOG.info("Selected threshold %.2f bps, volatility floor %.1f bps", threshold, chosen["min_volatility_bps"])
     test = simulate(
         sim_frames["test"],
         predictions["test"],
-        cfg["strategy"],
+        chosen,
         threshold,
         cfg["runtime"]["capital_krw"],
         max_order=cfg["runtime"]["max_order_krw"],
@@ -524,7 +529,7 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
             simulate(
                 sim_frames["val"],
                 block_pred,
-                cfg["strategy"],
+                chosen,
                 threshold,
                 cfg["runtime"]["capital_krw"],
                 max_order=cfg["runtime"]["max_order_krw"],
@@ -545,7 +550,10 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
             "forecast": forecast,
             "buy_hold_test": test_baseline,
             "cash_return_pct": 0,
-            "threshold_search": [{"bps": th, **r["metrics"]} for th, r in results],
+            "threshold_search": [
+                {"bps": th, "min_volatility_bps": st["min_volatility_bps"], **r["metrics"]} for th, st, r in results
+            ],
+            "min_volatility_bps": chosen["min_volatility_bps"],
             "approved_for_live": approved,
             "threshold_bps": threshold,
             "limitations": [
@@ -585,7 +593,7 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
         "data_end": min(f.index[-1] for f in frames).isoformat(),
         "threshold_bps": threshold,
         "approved_for_live": approved,
-        "strategy": cfg["strategy"],
+        "strategy": chosen,
         "gate": cfg["gate"],
         "onnx_max_error_bps": parity_error,
         "training_seconds": time.monotonic() - started,

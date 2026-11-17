@@ -5,7 +5,7 @@ import math
 import numpy as np
 import pandas as pd
 
-from .strategy import STOP_REASONS, decide, order_key
+from .strategy import LIMIT_EXIT_REASONS, STOP_REASONS, decide, order_key
 
 
 def metrics(equity, trades, initial):
@@ -49,7 +49,12 @@ def simulate(frames, predictions, strategy, threshold, initial=100000.0, max_ord
     fee, slip = strategy["fee_rate"], strategy["slippage_bps"] / 10000
     limit_entry = strategy.get("entry_order", "market") == "limit"
     offset = float(strategy.get("limit_offset_bps", 0.0)) / 10000
-    missed = 0
+    missed = missed_exits = 0
+    limit_exit = strategy.get("exit_order", "market") == "limit"
+    window = int(strategy.get("volatility_window", 48))
+    vols = {
+        m: (np.log(f["close"]).diff().rolling(window).std() * 10000).to_dict() for m, f in frames.items()
+    }
     arrays = {m: f.to_dict("index") for m, f in frames.items()}
     for ts in times:
         executable = {}
@@ -82,15 +87,27 @@ def simulate(frames, predictions, strategy, threshold, initial=100000.0, max_ord
                 pred, gate = float("inf"), float("inf")
             else:
                 pred, gate = float(pred), threshold
-            decision, reason = decide(pred, position, row["close"], bar, strategy, gate, last_stop.get(market))
+            decision, reason = decide(
+                pred, position, row["close"], bar, strategy, gate, last_stop.get(market), vols[market].get(ts)
+            )
             if market in positions and (daily_halt or halted):
                 decision, reason = "sell", "risk_halt"
             intents.append((decision, market, nxt, pred, reason))
         # Sells release cash first, then strongest signals. Same ordering as the runtime.
         for decision, market, nxt, pred, reason in sorted(intents, key=lambda x: order_key(x[0], x[1], x[3])):
             if decision == "sell" and market in positions:
-                p = positions.pop(market)
-                proceeds = p["qty"] * nxt["open"] * (1 - slip) * (1 - fee)
+                p = positions[market]
+                if limit_exit and reason in LIMIT_EXIT_REASONS and not p.get("exit_missed"):
+                    # Rest at the best ask (~close) for one bar; fill only if traded strictly above.
+                    limit = row_close[market] * (1 + offset)
+                    if not nxt.get("high", -np.inf) > limit:
+                        p["exit_missed"] = True  # next exit falls back to a market order
+                        missed_exits += 1
+                        continue
+                    proceeds = p["qty"] * max(limit, nxt["open"] * (1 - slip)) * (1 - fee)
+                else:
+                    proceeds = p["qty"] * nxt["open"] * (1 - slip) * (1 - fee)
+                positions.pop(market)
                 cash += proceeds
                 trades.append(
                     {
@@ -148,6 +165,8 @@ def simulate(frames, predictions, strategy, threshold, initial=100000.0, max_ord
     result_metrics = metrics(equity, trades, initial)
     if limit_entry:
         result_metrics["missed_limit_entries"] = missed
+    if limit_exit:
+        result_metrics["missed_limit_exits"] = missed_exits
     return {
         "metrics": result_metrics,
         "trades": trades,
