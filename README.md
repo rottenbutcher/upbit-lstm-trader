@@ -194,6 +194,9 @@ One module (`strategy.py`) decides for the backtest, paper and live trading, so 
 | ⏳ | **Max hold** | position closed after `max_hold_bars` |
 | 🧘 | **Minimum hold** | forecast-driven exits wait `min_hold_bars`; risk exits never wait |
 | 🧊 | **Cooldown** | no re-entry for `cooldown_bars` after a stop or trailing exit |
+| 🧾 | **Limit orders** | entries rest at the bid, forecast/max-hold/take-profit exits rest at the ask for one bar; a missed exit falls back to market, stops are always market |
+| 🌊 | **Volatility filter** | no entry while 48-bar realised volatility < `min_volatility_bps` |
+| 🔎 | **Strategy search** | `[strategy.search]` grid (volatility × trailing × stop-loss × threshold) is chosen on validation only |
 | 🧯 | **Loss halts** | daily loss limit and cumulative drawdown liquidate and block buys |
 
 ---
@@ -420,6 +423,31 @@ scripts/             🚀 Windows and Linux launchers
 
 ---
 
+## 📊 Backtest results
+
+Data: BTC · XRP · ETH · SOL · NEAR, 5-minute bars. Splits: train / 90-day validation / 90-day test. Costs: 0.05% fee + slippage each side.
+
+| Run | Setup | Val return (PF) | Val trades | Test return (PF) | Test trades | Approved |
+|---|---|---|---|---|---|:-:|
+| 1 | 2.5 y, 30 min, market orders, best: lstm | −0.27% | 75 | +1.74% | 79 | ❌ |
+| 2 | 2.5 y, 60 min, limit entries, mixed ×3 | +0.19% (1.03) | 110 | +0.30% (1.04) | 137 | ❌ |
+| 2b | run 2 + trailing-stop variants | +0.43% (1.06) | – | +0.02% (1.00) | – | ❌ |
+| 4 | 2.5 y, **2 h**, limit exits, mixed ×3 | −0.78% (0.86) | – | −2.40% (0.57) | 71 | ❌ |
+| 4b | run 4, 216-combination reselection | best −0.49% | – | – | – | ❌ |
+| **3** | **full history (2017–), 60 min, limit in/out, mixed ×6, search grid** | **+0.97% (1.08)** | **186** | **+3.28% (1.22)** | **251** | ✅ |
+
+Run 3 selected threshold 12.6 bps, `min_volatility_bps = 25`, `trailing_stop = 0.025`, `stop_loss = 0.02`; validation Sharpe 1.10, test Sharpe 2.26, max drawdown 1.8%, rank IC 0.069 (val and test). Buy & hold at 50% exposure on the same test window: **+7.13%**.
+
+**Honest reading**
+
+- The forecast edge is small (rank IC ≈ 0.07, direction accuracy 53%) and only just clears costs; 60 min beat both 30 min and 2 h.
+- Test profit is concentrated: NEAR +3,596 KRW of +3,285 total; XRP lost. Validation blocks: +0.18% / +0.79% / 0 trades.
+- The same test window was looked at across runs 1–4, so the "holdout" is partly used up. Run paper trading for weeks before going live with small size.
+- The strategy did not beat buy & hold in a rising market; its value is lower exposure and drawdown, not higher return.
+- No profit is guaranteed.
+
+---
+
 ## 📅 Development timeline
 
 ```mermaid
@@ -430,6 +458,8 @@ timeline
     2026-11-17 : 🛡️ Hardened runtime
                : Trailing stop · min hold · cooldown
                : 🧠 Model zoo + compare-models
+               : 🧾 Limit orders · volatility filter · strategy search
+               : ✅ First approved model (full history, 60 min)
 ```
 
 | | Date | Milestone | What was added |
@@ -437,13 +467,16 @@ timeline
 | 🖥️ | **2026-11-07** | **Dashboard** | dark training dashboard with presets, live learning curves, backtest equity, and a resume flow that names every changed setting |
 | 🛡️ | **2026-11-17** | **Hardened runtime** | missing-candle and wide-spread failure modes fixed, dust re-entry, strongest-signal ordering, trailing stop, minimum hold, cooldown, stablecoin-free universe |
 | 🧠 | **2026-11-17** | **Model zoo** | GRU, TCN and patch-Transformer members, heterogeneous ensembles, rank-IC early stopping, `compare-models` |
+| 🧾 | **2026-11-17** | **Execution** | limit entries and exits with cancel/partial-fill reconcile and market fallback, volatility filter, quantile thresholds, trade-count-aware selection, `[strategy.search]` grid |
+| ✅ | **2026-11-17** | **Results** | 6 backtest runs; full-history 60-min mixed ×6 passed validation and test gates (see Backtest results) |
 
 ---
 
 ## 🗺️ Roadmap
 
-- [ ] 🧾 Limit-order entries at the best bid with timeout cancel, and a fill-probability-aware backtest
-- [ ] ⏱️ Longer forecast horizons (60 min+) so the edge clears round-trip costs
+- [x] 🧾 Limit-order entries and exits with timeout cancel, fill-aware backtest
+- [x] ⏱️ Horizon study (30 min / 60 min / 2 h → 60 min wins)
+- [ ] 🌍 Wider universe so profit is not concentrated in one coin
 - [ ] 🔄 Walk-forward retraining instead of a single train / validation / test split
 - [ ] 🗂️ Point-in-time universe to remove survivorship bias
 - [ ] 📊 Paper-vs-backtest drift report on the server

@@ -8,7 +8,7 @@ minimum_days = 365
 lookback = 96
 # Forecast horizon in 5-minute bars (24 = 2 hours). Longer horizons give the forecast more room
 # to clear round-trip costs; changing it requires retraining.
-horizon = 24
+horizon = 12
 hidden = 64
 layers = 2
 dropout = 0.15
@@ -18,7 +18,7 @@ feature_version = 2
 attention = true
 # Independently seeded members averaged in one ONNX file; their disagreement is the
 # uncertainty output used by the runtime. Training time scales with this number.
-ensemble = 3
+ensemble = 6
 # Member architecture: "lstm" | "gru" | "tcn" | "transformer", or a list cycled over members,
 # e.g. ["lstm", "tcn", "transformer"] for a heterogeneous ensemble (more diverse errors).
 # Compare candidates first: upbit-bot compare-models
@@ -60,7 +60,7 @@ entry_thresholds_bps = [20.0, 30.0, 45.0, 60.0, 90.0]
 # Also try these upper quantiles of the validation forecasts as thresholds (scale-free).
 entry_quantiles = [0.90, 0.95, 0.98, 0.99]
 exit_bps = 0.0
-max_hold_bars = 48
+max_hold_bars = 24
 stop_loss = 0.02
 take_profit = 0.04
 # "limit": buys rest at the best bid for one bar and are cancelled if unfilled (no spread or
