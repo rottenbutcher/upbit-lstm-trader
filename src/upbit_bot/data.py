@@ -10,6 +10,8 @@ from .api import healthy_market
 from .common import read_json, save_json, utcnow
 
 LOG = logging.getLogger(__name__)
+# Fiat-pegged coins: their KRW price is an FX rate, not a tradable crypto return.
+DEFAULT_EXCLUDE = ("KRW-USDT", "KRW-USDC", "KRW-USDE", "KRW-USD1", "KRW-PYUSD", "KRW-DAI", "KRW-TUSD")
 COLS = ["open", "high", "low", "close", "volume", "value"]
 
 
@@ -35,14 +37,30 @@ def select_universe(api, cfg, directory):
     path = Path(directory) / "universe.json"
     if path.exists():
         return read_json(path)
-    markets = [r["market"] for r in api.markets() if r["market"].startswith("KRW-") and healthy_market(r)]
+    excluded = set(cfg["data"].get("exclude", DEFAULT_EXCLUDE))
+    markets = [
+        r["market"]
+        for r in api.markets()
+        if r["market"].startswith("KRW-") and healthy_market(r) and r["market"] not in excluded
+    ]
     ranked = sorted(api.tickers(markets), key=lambda r: r["acc_trade_price_24h"], reverse=True)
-    selected = ranked[: cfg["data"]["top_n"]]
-    if len(selected) != cfg["data"]["top_n"]:
-        raise ValueError("Not enough healthy KRW markets")
+    # A market must have traded since start + minimum_days, otherwise training would fail later
+    # (new listings dominate 24h volume right after listing).
+    cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=cfg["data"]["minimum_days"])
+    selected, skipped = [], []
+    for r in ranked:
+        if len(selected) == cfg["data"]["top_n"]:
+            break
+        if api.candles(r["market"], iso(cutoff), 1):
+            selected.append(r)
+        else:
+            skipped.append(r["market"])
+    if skipped:
+        LOG.info("Skipped markets without %s days of history: %s", cfg["data"]["minimum_days"], skipped)
     result = {
         "selected_at": utcnow().isoformat(),
-        "basis": "24h KRW traded value; current-universe bias",
+        "basis": "24h KRW traded value, stablecoins excluded, minimum history; current-universe bias",
+        "skipped_short_history": skipped,
         "markets": [r["market"] for r in selected],
         "ranking": [{"market": r["market"], "value_24h": r["acc_trade_price_24h"]} for r in selected],
     }

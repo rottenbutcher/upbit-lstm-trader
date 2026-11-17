@@ -5,7 +5,7 @@ import math
 import numpy as np
 import pandas as pd
 
-from .strategy import action
+from .strategy import STOP_REASONS, decide, order_key
 
 
 def metrics(equity, trades, initial):
@@ -39,7 +39,7 @@ def metrics(equity, trades, initial):
 def simulate(frames, predictions, strategy, threshold, initial=100000.0, max_order=float("inf")):
     """Close[t] decision, open[t+1] fill. No intrabar stop-fill assumptions."""
     times = sorted(set().union(*(set(p.index) for p in predictions.values())))
-    cash, positions, marks, trades, equity = initial, {}, {}, [], []
+    cash, positions, marks, trades, equity, last_stop = initial, {}, {}, [], [], {}
     peak, day, day_start, daily_halt, halted = initial, None, initial, False, False
     fee, slip = strategy["fee_rate"], strategy["slippage_bps"] / 10000
     arrays = {m: f.to_dict("index") for m, f in frames.items()}
@@ -60,21 +60,40 @@ def simulate(frames, predictions, strategy, threshold, initial=100000.0, max_ord
         halted = halted or eq < peak * (1 - strategy["max_drawdown"])
         intents = []
         bar = int(ts.timestamp() // 300)
+        for market, p in positions.items():
+            if market in executable:
+                p["peak"] = max(p["peak"], executable[market][0]["close"])
         for market, (row, nxt) in executable.items():
             pred = predictions[market].get(ts, np.nan)
+            position = positions.get(market)
             if not np.isfinite(pred):
-                continue
-            decision = action(float(pred), positions.get(market), row["close"], bar, strategy, threshold)
+                if position is None:
+                    continue
+                # No forecast: risk exits still apply, forecast exit and entries do not.
+                pred, gate = float("inf"), float("inf")
+            else:
+                pred, gate = float(pred), threshold
+            decision, reason = decide(pred, position, row["close"], bar, strategy, gate, last_stop.get(market))
             if market in positions and (daily_halt or halted):
-                decision = "sell"
-            intents.append((decision, market, nxt))
-        # Sells release cash first. Sort deterministically to match runtime.
-        for decision, market, nxt in sorted(intents, key=lambda x: (x[0] != "sell", x[1])):
+                decision, reason = "sell", "risk_halt"
+            intents.append((decision, market, nxt, pred, reason))
+        # Sells release cash first, then strongest signals. Same ordering as the runtime.
+        for decision, market, nxt, pred, reason in sorted(intents, key=lambda x: order_key(x[0], x[1], x[3])):
             if decision == "sell" and market in positions:
                 p = positions.pop(market)
                 proceeds = p["qty"] * nxt["open"] * (1 - slip) * (1 - fee)
                 cash += proceeds
-                trades.append({"market": market, "time": ts.isoformat(), "pnl": proceeds - p["cost"]})
+                trades.append(
+                    {
+                        "market": market,
+                        "time": ts.isoformat(),
+                        "pnl": proceeds - p["cost"],
+                        "bars": bar - p["bar"],
+                        "reason": reason,
+                    }
+                )
+                if reason in STOP_REASONS:
+                    last_stop[market] = bar
             elif decision == "buy" and not (daily_halt or halted):
                 exposure = sum(p["qty"] * marks[m] for m, p in positions.items())
                 amount = min(
@@ -90,6 +109,7 @@ def simulate(frames, predictions, strategy, threshold, initial=100000.0, max_ord
                 positions[market] = {
                     "qty": amount / price,
                     "entry": price,
+                    "peak": price,
                     "cost": amount * (1 + fee),
                     "bar": bar,
                 }
@@ -104,7 +124,9 @@ def simulate(frames, predictions, strategy, threshold, initial=100000.0, max_ord
         for market, p in positions.items():
             proceeds = p["qty"] * marks[market] * (1 - slip) * (1 - fee)
             cash += proceeds
-            trades.append({"market": market, "time": equity[-1][0].isoformat(), "pnl": proceeds - p["cost"]})
+            trades.append(
+                {"market": market, "time": equity[-1][0].isoformat(), "pnl": proceeds - p["cost"], "reason": "end"}
+            )
         equity[-1] = (equity[-1][0], cash)
     return {
         "metrics": metrics(equity, trades, initial),

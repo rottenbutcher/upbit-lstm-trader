@@ -28,8 +28,20 @@ def load_config(path="config.toml"):
         raise ValueError("Trading costs must be nonnegative")
     if int(m.get("ensemble", 1)) < 1 or int(m.get("feature_version", 1)) not in (1, 2):
         raise ValueError("model.ensemble must be >= 1 and model.feature_version 1 or 2")
+    from .model_names import check_architecture
+
+    check_architecture(m)
     if t.get("lr_schedule", "constant") not in ("constant", "cosine"):
         raise ValueError("training.lr_schedule must be 'constant' or 'cosine'")
+    if t.get("early_stop_metric", "mae") not in ("mae", "ic"):
+        raise ValueError("training.early_stop_metric must be 'mae' or 'ic'")
+    if not 0 <= float(s.get("trailing_stop", 0)) < 1:
+        raise ValueError("strategy.trailing_stop must be within [0, 1)")
+    for key in ("min_hold_bars", "cooldown_bars"):
+        if int(s.get(key, 0)) < 0:
+            raise ValueError(f"strategy.{key} must be nonnegative")
+    if int(s.get("min_hold_bars", 0)) > s["max_hold_bars"]:
+        raise ValueError("strategy.min_hold_bars cannot exceed max_hold_bars")
     from .policy import settings as policy_settings
 
     policy_settings(cfg)  # Fails fast on unsafe policy bounds.

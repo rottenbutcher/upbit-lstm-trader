@@ -17,6 +17,10 @@ attention = true
 # Independently seeded members averaged in one ONNX file; their disagreement is the
 # uncertainty output used by the runtime. Training time scales with this number.
 ensemble = 3
+# Member architecture: "lstm" | "gru" | "tcn" | "transformer", or a list cycled over members,
+# e.g. ["lstm", "tcn", "transformer"] for a heterogeneous ensemble (more diverse errors).
+# Compare candidates first: upbit-bot compare-models
+architecture = "lstm"
 
 [hmm]
 states = 3
@@ -43,6 +47,9 @@ stride = 3
 validation_days = 90
 test_days = 90
 workers = 0
+# Epoch selection: "ic" = best rank correlation of forecast vs realized return (what the
+# threshold rule trades on); "mae" = previous behavior.
+early_stop_metric = "ic"
 
 [strategy]
 fee_rate = 0.0005
@@ -52,6 +59,12 @@ exit_bps = 0.0
 max_hold_bars = 12
 stop_loss = 0.02
 take_profit = 0.04
+# Exit when price falls this far below the best close since entry (0 = off). Locks in gains.
+trailing_stop = 0.012
+# Forecast-driven exits wait this many bars; stops/take-profit never wait (0 = off).
+min_hold_bars = 2
+# No re-entry in a market for this many bars after a stop or trailing exit (0 = off).
+cooldown_bars = 6
 position_fraction = 0.10
 max_exposure = 0.50
 daily_loss_limit = 0.03

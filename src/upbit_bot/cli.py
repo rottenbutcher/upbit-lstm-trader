@@ -46,8 +46,8 @@ def adoption(cfg, args):
                 raise ValueError("Remaining cash budget is not backed by available KRW")
             with state.db:
                 state.db.execute(
-                    "INSERT INTO positions VALUES (?,?,?,?,?)",
-                    (args.market, args.quantity, price, value, int(utcnow().timestamp() // 300) - 1),
+                    "INSERT INTO positions (market,qty,entry,cost,bar,peak) VALUES (?,?,?,?,?,?)",
+                    (args.market, args.quantity, price, value, int(utcnow().timestamp() // 300) - 1, price),
                 )
                 state.set("cash", cash)
         finally:
@@ -110,6 +110,11 @@ def main():
     p.add_argument("--data", default="data")
     p.add_argument("--output", default="artifacts")
     p.add_argument("--resume", action="store_true")
+    p.add_argument("--allow-cpu", action="store_true")
+    p = sub.add_parser("compare-models", help="Train each architecture candidate and rank them")
+    p.add_argument("--data", default="data")
+    p.add_argument("--output", default="artifacts/compare")
+    p.add_argument("--candidates", default="lstm,gru,tcn,transformer,mixed")
     p.add_argument("--allow-cpu", action="store_true")
     p = sub.add_parser("train-hmm", help="CPU HMM research and optional frozen LSTM comparison")
     p.add_argument("--data", default="data")
@@ -192,6 +197,11 @@ def main():
             # Exit code 3 lets the GUI offer "restore settings" or "fresh run" instead of a dead end.
             print(exc, file=sys.stderr)
             raise SystemExit(3) from None
+    elif args.command == "compare-models":
+        from .compare import compare
+
+        result = compare(cfg, args.data, args.output, args.candidates.split(","), args.allow_cpu)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
     elif args.command == "package":
         from .package import package
 

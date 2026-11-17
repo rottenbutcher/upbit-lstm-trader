@@ -17,7 +17,7 @@ from .backtest import buy_hold, passed, simulate
 from .common import read_json, save_json, sha256, utcnow
 from .data import CandleStore
 from .features import WARMUP, feature_frame, feature_list, model_input, split_indices
-from .model import Ensemble, ReturnLSTM, export_onnx
+from .model import Ensemble, build_member, export_onnx, member_architectures
 from .research import candle_snapshot
 from .resume import MISMATCH_FILE, ResumeMismatch, changes, identity, write_info
 from .resume import fingerprint as identity_fingerprint
@@ -52,6 +52,23 @@ def predict(model, dataset, device, batch_size):
     return np.concatenate(out) if out else np.array([], dtype=np.float32)
 
 
+def rank_ic(pred, y):
+    """Spearman correlation: robust to the fat tails of 30-minute crypto returns."""
+    if len(y) < 3 or np.std(pred) < 1e-9:
+        return 0.0
+    a = np.argsort(np.argsort(pred)).astype(np.float64)
+    b = np.argsort(np.argsort(y)).astype(np.float64)
+    return float(np.corrcoef(a, b)[0, 1])
+
+
+def validation_score(pred, y, metric):
+    """Lower is better. "ic" selects the epoch that ranks returns best, which is what the
+    threshold rule trades on; "mae" (legacy) tends to reward forecasts that collapse toward 0."""
+    if metric == "ic":
+        return -rank_ic(pred, y)
+    return float(np.mean(np.abs(pred - y)))
+
+
 def model_settings(cfg):
     """Model options with defaults that keep older config files valid."""
     mc = cfg["model"]
@@ -59,6 +76,7 @@ def model_settings(cfg):
         "feature_version": int(mc.get("feature_version", 1)),
         "attention": bool(mc.get("attention", False)),
         "ensemble": int(mc.get("ensemble", 1)),
+        "architectures": member_architectures(mc, int(mc.get("ensemble", 1))),
     }
 
 
@@ -155,9 +173,8 @@ def fit_member(member, cfg, ctx, device, out, resume, started):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    model = ReturnLSTM(
-        ctx["inputs"], **{k: mc[k] for k in ("hidden", "layers", "dropout")}, attention=ms["attention"]
-    ).to(device)
+    model = build_member(ms["architectures"][member], ctx["inputs"], mc, ms["attention"]).to(device)
+    LOG.info("Ensemble member %d architecture: %s", member + 1, ms["architectures"][member])
     optimizer = torch.optim.AdamW(model.parameters(), lr=t["learning_rate"], weight_decay=t["weight_decay"])
     schedule = t.get("lr_schedule", "constant")
     warmup = int(t.get("warmup_epochs", 0))
@@ -251,27 +268,30 @@ def fit_member(member, cfg, ctx, device, out, resume, started):
                 LOG.warning("GPU memory limit: restart epoch with batch=%d", batch)
         ctx["batch"] = batch
         val_pred = predict(model, val_ds, device, batch)
-        score = float(np.mean(np.abs(val_pred - val_y)))
+        mae = float(np.mean(np.abs(val_pred - val_y)))
+        score = validation_score(val_pred, val_y, t.get("early_stop_metric", "mae"))
         history.append(
             {
                 "member": member + 1,
                 "epoch": epoch + 1,
                 "learning_rate": optimizer.param_groups[0]["lr"],
                 "train_loss": float(np.mean(losses)),
-                "validation_mae_bps": score,
+                "validation_mae_bps": mae,
+                "validation_rank_ic": rank_ic(val_pred, val_y),
                 "elapsed_seconds": time.monotonic() - started,
                 "batch_size": batch,
             }
         )
         LOG.info(
-            "member %d/%d epoch %d/%d lr=%.2e train=%.5f validation MAE=%.3f bps elapsed=%.1f min",
+            "member %d/%d epoch %d/%d lr=%.2e train=%.5f validation MAE=%.3f bps rank IC=%.4f elapsed=%.1f min",
             member + 1,
             ctx["members"],
             epoch + 1,
             t["epochs"],
             optimizer.param_groups[0]["lr"],
             np.mean(losses),
-            score,
+            mae,
+            rank_ic(val_pred, val_y),
             (time.monotonic() - started) / 60,
         )
         if score < best:
@@ -389,7 +409,8 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
     inputs = len(scaler["features"]) + len(frames)
     train_refs = references(splits, "train", t["stride"])
     val_refs = references(splits, "val")
-    val_small = val_refs[np.linspace(0, len(val_refs) - 1, min(8192, len(val_refs))).astype(int)]
+    # IC needs more points than MAE to be stable; still a fixed, evenly spaced subset.
+    val_small = val_refs[np.linspace(0, len(val_refs) - 1, min(32768, len(val_refs))).astype(int)]
     progress_path = out / "progress.json"
     progress_path.unlink(missing_ok=True)
 
@@ -425,10 +446,8 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
         history.extend(member_history)
         save_json(out / "training_history.json", history)
     members = []
-    for state in states:
-        net = ReturnLSTM(
-            inputs, **{k: mc[k] for k in ("hidden", "layers", "dropout")}, attention=ms["attention"]
-        )
+    for state, arch in zip(states, ms["architectures"]):
+        net = build_member(arch, inputs, mc, ms["attention"])
         net.load_state_dict(state)
         members.append(net)
     model = Ensemble(members).to(device)
@@ -445,6 +464,7 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
             "direction_accuracy": float(np.mean((pred > 0) == (y > 0))),
             # Information coefficient: correlation of forecast and realized return.
             "ic": float(np.corrcoef(pred, y)[0, 1]) if len(y) > 2 and np.std(pred) > 1e-9 else 0.0,
+            "rank_ic": rank_ic(pred, y),
         }
         predictions[name], sim_frames[name] = {}, {}
         for i, market in enumerate(universe["markets"]):
@@ -465,7 +485,12 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
         )
         results.append((threshold, result))
     candidates = [(th, r) for th, r in results if passed(r, cfg["gate"])]
-    threshold, validation = max(candidates or results, key=lambda item: item[1]["metrics"]["return_pct"])
+    # Max-return selection picks the luckiest threshold. Risk-adjusted return is less fragile;
+    # profit factor breaks ties.
+    threshold, validation = max(
+        candidates or results,
+        key=lambda item: (item[1]["metrics"]["sharpe_daily"], item[1]["metrics"]["profit_factor"]),
+    )
     test = simulate(
         sim_frames["test"],
         predictions["test"],
@@ -528,6 +553,7 @@ def train(cfg, directory="data", output="artifacts", resume=False, allow_cpu=Fal
         "warmup": WARMUP[ms["feature_version"]],
         "ensemble": ms["ensemble"],
         "attention": ms["attention"],
+        "architectures": ms["architectures"],
         "created_at": utcnow().isoformat(),
         "model_sha256": sha256(out / "model.onnx"),
         "report_sha256": sha256(out / "report.json"),

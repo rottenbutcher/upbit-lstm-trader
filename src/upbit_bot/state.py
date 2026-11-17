@@ -22,6 +22,11 @@ class State:
             payload TEXT, status TEXT, response TEXT);
           CREATE TABLE IF NOT EXISTS cycles (bar INT PRIMARY KEY);
         """)
+        # Migration: highest close since entry, for the trailing stop. NULL = entry price.
+        columns = {r[1] for r in self.db.execute("PRAGMA table_info(positions)")}
+        if "peak" not in columns:
+            with self.db:
+                self.db.execute("ALTER TABLE positions ADD COLUMN peak REAL")
         if self.get("mode") is None:
             with self.db:
                 self.set("mode", mode)
@@ -43,6 +48,20 @@ class State:
 
     def positions(self):
         return {r["market"]: dict(r) for r in self.db.execute("SELECT * FROM positions")}
+
+    def update_peaks(self, closes):
+        with self.db:
+            for market, price in closes.items():
+                self.db.execute(
+                    "UPDATE positions SET peak=MAX(COALESCE(peak, entry), ?) WHERE market=?", (price, market)
+                )
+
+    def last_stop(self, market):
+        return self.get(f"last_stop:{market}")
+
+    def record_stop(self, market, bar):
+        with self.db:
+            self.set(f"last_stop:{market}", bar)
 
     def claim_cycle(self, bar):
         with self.db:
@@ -82,8 +101,8 @@ class State:
                         raise ValueError("Fill exceeds bot cash budget")
                     entry = (p.get("entry", 0) * p["qty"] + funds) / total_qty
                     self.db.execute(
-                        "INSERT OR REPLACE INTO positions VALUES (?,?,?,?,?)",
-                        (market, total_qty, entry, cost, p["bar"]),
+                        "INSERT OR REPLACE INTO positions (market,qty,entry,cost,bar,peak) VALUES (?,?,?,?,?,?)",
+                        (market, total_qty, entry, cost, p["bar"], max(p.get("peak") or entry, entry)),
                     )
                 else:
                     if qty > p["qty"] + max(1e-10, p["qty"] * 1e-8):

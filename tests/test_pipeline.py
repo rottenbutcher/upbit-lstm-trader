@@ -70,6 +70,28 @@ def test_train_export_and_package(tmp_path):
             actual = comparison["results"]["LSTM"]["forecast"][split]
             original = bundle.report["forecast"][split]
             assert abs(actual["mae_bps"] - original["mae_bps"]) < 0.01
+    # Live-style inference from paginated API candles; one market lost its latest (no-trade) bar.
+    import pandas as pd
+
+    raw = candles(2400)
+    end = raw.index[-1] + pd.Timedelta(minutes=5)
+
+    class CandleAPI:
+        def candles(self, market, to, count=200):
+            data = raw.loc[raw.index < pd.Timestamp(to)]
+            if market == "KRW-ETH":
+                data = data.loc[data.index < raw.index[-1]]
+            rows = [
+                {"candle_date_time_utc": t.strftime("%Y-%m-%dT%H:%M:%S"), "opening_price": r.open,
+                 "high_price": r.high, "low_price": r.low, "trade_price": r.close,
+                 "candle_acc_trade_volume": r.volume, "candle_acc_trade_price": r.value}
+                for t, r in data.iloc[-count:].iterrows()
+            ]
+            return rows[::-1]
+
+    pred, closes, spread = bundle.infer(CandleAPI(), end)
+    assert np.isfinite(pred["KRW-BTC"]) and np.isnan(pred["KRW-ETH"])
+    assert closes["KRW-ETH"] == pytest.approx(raw["close"].iloc[-2])
     # Mismatched model bytes must fail before any inference/order.
     with (out / "model.onnx").open("ab") as f:
         f.write(b"tampered")

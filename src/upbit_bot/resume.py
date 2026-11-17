@@ -24,8 +24,8 @@ from .common import read_json, save_json, utcnow
 VERSION = 2
 INFO_FILE = "resume.json"
 MISMATCH_FILE = "resume-mismatch.json"
-MODEL_KEYS = ("lookback", "horizon", "hidden", "layers", "dropout", "feature_version", "attention")
-MODEL_DEFAULTS = {"feature_version": 1, "attention": False}
+MODEL_KEYS = ("lookback", "horizon", "hidden", "layers", "dropout", "feature_version", "attention", "architecture")
+MODEL_DEFAULTS = {"feature_version": 1, "attention": False, "architecture": "lstm"}
 TRAINING_KEYS = (
     "seed",
     "learning_rate",
@@ -36,8 +36,9 @@ TRAINING_KEYS = (
     "test_days",
     "lr_schedule",
     "warmup_epochs",
+    "early_stop_metric",
 )
-TRAINING_DEFAULTS = {"lr_schedule": "constant", "warmup_epochs": 0}
+TRAINING_DEFAULTS = {"lr_schedule": "constant", "warmup_epochs": 0, "early_stop_metric": "mae"}
 LEGACY = "legacy"
 
 

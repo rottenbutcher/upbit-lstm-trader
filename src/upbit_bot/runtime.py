@@ -20,9 +20,13 @@ from .data import candle_frame, iso
 from .features import WARMUP, feature_frame, feature_list, model_input
 from .policy import effective as effective_policy
 from .state import State
-from .strategy import action
+from .strategy import STOP_REASONS, decide, order_key
 
 LOG = logging.getLogger(__name__)
+# A market with no candle for this many bars is treated as an outage, not a quiet period.
+STALE_BARS = 6
+# Protective sells (stop, halt) tolerate a wider spread than entries; never trapped by a thin book.
+PROTECTIVE_SPREAD_MULTIPLIER = 4.0
 
 
 class Bundle:
@@ -50,7 +54,7 @@ class Bundle:
     def infer(self, api, end):
         """Returns (predictions_bps, closes, uncertainty_bps) for the last closed candle."""
         m = self.manifest
-        x, closes = [], {}
+        x, closes, missing = [], {}, set()
         count = m["lookback"] + self.warmup + 12
         for i, market in enumerate(m["markets"]):
             rows, before = [], end
@@ -65,8 +69,14 @@ class Bundle:
             raw = candle_frame(rows)
             raw = raw.loc[raw.index < end]
             expected = end - pd.Timedelta(minutes=5)
-            if raw.empty or raw.index[-1] != expected:
-                raise ValueError(f"{market}: most recent closed candle missing; skip trading")
+            if raw.empty or expected - raw.index[-1] > pd.Timedelta(minutes=5 * STALE_BARS):
+                raise ValueError(f"{market}: no recent candles; skip trading")
+            if raw.index[-1] != expected:
+                # No trade in the latest bar (Upbit omits such candles). Same as training: carry the
+                # last close forward, mark unobserved, and do not open positions on it.
+                LOG.warning("%s: latest candle missing (no trades); entries disabled this bar", market)
+                raw.loc[expected] = np.nan
+                missing.add(market)
             frame, feat = feature_frame(raw, self.feature_version)
             window = feat.iloc[-m["lookback"] :].to_numpy()
             if len(window) != m["lookback"] or not np.isfinite(window).all():
@@ -79,11 +89,10 @@ class Bundle:
         spread = outputs[1].reshape(-1) if len(outputs) > 1 else np.zeros_like(pred)
         if not (np.isfinite(pred).all() and np.isfinite(spread).all()):
             raise ValueError("Nonfinite model output")
-        return (
-            dict(zip(m["markets"], map(float, pred))),
-            closes,
-            dict(zip(m["markets"], map(float, spread))),
-        )
+        pred = dict(zip(m["markets"], map(float, pred)))
+        for market in missing:
+            pred[market] = float("nan")
+        return pred, closes, dict(zip(m["markets"], map(float, spread)))
 
 
 def reconcile(api, state):
@@ -178,15 +187,33 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
     )
     if not state.claim_cycle(bar):
         return {"status": "already_processed", "bar": bar}
+    state.update_peaks({k: v for k, v in closes.items() if k in positions})
+    positions = state.positions()
     decisions = []
     for market in sorted(m["markets"]):
-        decision = action(signal[market], positions.get(market), closes[market], bar, s, params["threshold_bps"])
+        p = positions.get(market)
+        minimum = s["min_order_krw"]
+        if p and p["qty"] * closes[market] < minimum:
+            # Unsellable dust is not a position: it must not block new entries in this market.
+            p = None
+        value = signal[market]
+        if math.isfinite(value):
+            decision, reason = decide(
+                value, p, closes[market], bar, s, params["threshold_bps"], state.last_stop(market)
+            )
+        elif p:
+            decision, reason = decide(float("inf"), p, closes[market], bar, s, float("inf"))
+        else:
+            decision, reason = "hold", "no_forecast"
         if decision == "buy" and market in params["blocked_markets"]:
-            decision = "hold"
-        if loss_halt and market in positions:
-            decision = "sell"
-        decisions.append((decision, market))
-    for decision, market in sorted(decisions, key=lambda x: (x[0] != "sell", x[1])):
+            decision, reason = "hold", "blocked"
+        if loss_halt and p:
+            decision, reason = "sell", "risk_halt"
+        decisions.append((decision, market, value if math.isfinite(value) else 0.0, reason))
+    actions = []
+    for decision, market, value, reason in sorted(decisions, key=lambda x: order_key(x[0], x[1], x[2])):
+        if decision != "hold":
+            actions.append({"market": market, "decision": decision, "reason": reason})
         if decision == "hold" or (decision == "buy" and (not buy_allowed or market not in healthy)):
             continue
         current_time = utcnow()
@@ -194,8 +221,10 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
             raise ValueError("Signal expired; no further orders this cycle")
         book = api.orderbook(market)
         bid, ask, spread = book_prices(book, current_time)
-        if spread > r["max_spread_bps"]:
-            LOG.warning("%s spread %.1f bps: skip %s", market, spread, decision)
+        protective = decision == "sell" and reason in (*STOP_REASONS, "risk_halt")
+        limit = r["max_spread_bps"] * (PROTECTIVE_SPREAD_MULTIPLIER if protective else 1)
+        if spread > limit:
+            LOG.warning("%s spread %.1f bps: skip %s (%s)", market, spread, decision, reason)
             continue
         positions = state.positions()
         p = positions.get(market)
@@ -270,13 +299,18 @@ def process_cycle(cfg, bundle, api, state, mode, state_dir, now=None):
                     break
                 time.sleep(1)
             if state.pending():
+                if decision == "sell" and reason in STOP_REASONS:
+                    state.record_stop(market, bar)
                 return {"status": "waiting_for_fill", "bar": bar}
-        LOG.info("%s %s %s (identifier=%s)", mode, decision, market, identifier)
+        if decision == "sell" and reason in STOP_REASONS:
+            state.record_stop(market, bar)
+        LOG.info("%s %s %s reason=%s (identifier=%s)", mode, decision, market, reason, identifier)
     return {
         "status": "ok",
         "bar": bar,
         "equity_krw": equity,
-        "predictions_bps": pred,
+        "predictions_bps": {k: (v if math.isfinite(v) else None) for k, v in pred.items()},
+        "actions": actions,
         "uncertainty_bps": uncertainty,
         "policy": policy_info,
         "threshold_bps": params["threshold_bps"],
