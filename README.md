@@ -1,129 +1,77 @@
-# 📈 Upbit LSTM Trader
+<div align="center">
 
-**An automated spot-trading system for Upbit KRW markets: an LSTM ensemble forecasts every 5 minutes, and an LLM reads the market environment daily to tune the strategy.**
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:0B132B,50:1C2541,100:3A506B&height=200&section=header&text=Upbit%20LSTM%20Trader&fontSize=64&fontColor=ffffff&fontAlignY=38&desc=Deep%20Forecasting%20%C2%B7%205-Minute%20Execution%20%C2%B7%20LLM%20Risk%20Policy&descAlignY=60&descSize=18&animation=fadeIn" width="100%" alt="Upbit LSTM Trader"/>
 
-<br>
+<img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=500&size=20&pause=1200&color=5BC0BE&center=true&vCenter=true&width=680&lines=Candles+%E2%86%92+Features+%E2%86%92+Ensemble+%E2%86%92+Orders;LSTM+%C2%B7+GRU+%C2%B7+TCN+%C2%B7+Transformer+%E2%80%94+compared+fairly;Train+on+your+GPU.+Trade+from+a+free+CPU+VM.;No+approval+gate%2C+no+live+orders." alt="typing banner"/>
 
-[![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-LSTM-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org/)
+<br/>
+
+**📈 An automated spot-trading system for Upbit KRW markets: a deep-learning ensemble decides every 5 minutes,<br/>
+and an 🤖 LLM reads the macro environment once a day to tighten or relax the strategy within hard limits.**
+
+<br/>
+
+[![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-Training-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![ONNX](https://img.shields.io/badge/ONNX_Runtime-Inference-005CED?style=for-the-badge&logo=onnx&logoColor=white)](https://onnxruntime.ai/)
 [![Claude](https://img.shields.io/badge/Claude-LLM_Policy-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](https://www.anthropic.com/)
 
-[![NumPy](https://img.shields.io/badge/NumPy-013243?style=flat-square&logo=numpy&logoColor=white)](https://numpy.org/)
-[![pandas](https://img.shields.io/badge/pandas-150458?style=flat-square&logo=pandas&logoColor=white)](https://pandas.pydata.org/)
-[![scikit-learn](https://img.shields.io/badge/scikit--learn-F7931E?style=flat-square&logo=scikitlearn&logoColor=white)](https://scikit-learn.org/)
-[![hmmlearn](https://img.shields.io/badge/hmmlearn-HMM-4B8BBE?style=flat-square)](https://hmmlearn.readthedocs.io/)
-[![SQLite](https://img.shields.io/badge/SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-[![Requests](https://img.shields.io/badge/Requests-HTTP-2C5BB4?style=flat-square&logo=python&logoColor=white)](https://requests.readthedocs.io/)
-[![JWT](https://img.shields.io/badge/PyJWT-000000?style=flat-square&logo=jsonwebtokens&logoColor=white)](https://pyjwt.readthedocs.io/)
-[![OpenAI compatible](https://img.shields.io/badge/OpenAI-compatible-412991?style=flat-square)](https://platform.openai.com/)
-[![Tkinter](https://img.shields.io/badge/Tkinter-GUI-FFD43B?style=flat-square&logo=python&logoColor=black)](https://docs.python.org/3/library/tkinter.html)
-
-[![Upbit](https://img.shields.io/badge/Upbit-Open_API-0A3FA8?style=flat-square)](https://docs.upbit.com/)
-[![FRED](https://img.shields.io/badge/FRED-Macro_Data-2E5E8C?style=flat-square)](https://fred.stlouisfed.org/)
-[![Oracle Cloud](https://img.shields.io/badge/Oracle_Cloud-Always_Free-F80000?style=flat-square&logo=oracle&logoColor=white)](https://www.oracle.com/cloud/free/)
-[![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04-E95420?style=flat-square&logo=ubuntu&logoColor=white)](https://ubuntu.com/)
-[![systemd](https://img.shields.io/badge/systemd-timer-30D475?style=flat-square&logo=linux&logoColor=black)](https://systemd.io/)
-[![uv](https://img.shields.io/badge/uv-bootstrap-DE5FE9?style=flat-square&logo=uv&logoColor=white)](https://github.com/astral-sh/uv)
-
 [![Tests](https://github.com/rottenbutcher/upbit-lstm-trader/actions/workflows/test.yml/badge.svg)](https://github.com/rottenbutcher/upbit-lstm-trader/actions/workflows/test.yml)
-[![pytest](https://img.shields.io/badge/tested_with-pytest-0A9EDC?style=flat-square&logo=pytest&logoColor=white)](https://pytest.org/)
-[![Ruff](https://img.shields.io/badge/lint-Ruff-D7FF64?style=flat-square&logo=ruff&logoColor=black)](https://github.com/astral-sh/ruff)
-![Windows](https://img.shields.io/badge/Windows-0078D6?style=flat-square&logo=windows&logoColor=white)
-![Linux](https://img.shields.io/badge/Linux-FCC624?style=flat-square&logo=linux&logoColor=black)
+[![NumPy](https://img.shields.io/badge/NumPy-013243?logo=numpy&logoColor=white)](https://numpy.org/)
+[![pandas](https://img.shields.io/badge/pandas-150458?logo=pandas&logoColor=white)](https://pandas.pydata.org/)
+[![SQLite](https://img.shields.io/badge/SQLite-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![hmmlearn](https://img.shields.io/badge/hmmlearn-HMM-4B8BBE)](https://hmmlearn.readthedocs.io/)
+[![Upbit](https://img.shields.io/badge/Upbit-Open_API-0A3FA8)](https://docs.upbit.com/)
+[![FRED](https://img.shields.io/badge/FRED-Macro_Data-2E5E8C)](https://fred.stlouisfed.org/)
+[![Oracle Cloud](https://img.shields.io/badge/Oracle_Cloud-Always_Free-F80000?logo=oracle&logoColor=white)](https://www.oracle.com/cloud/free/)
+[![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04-E95420?logo=ubuntu&logoColor=white)](https://ubuntu.com/)
+[![systemd](https://img.shields.io/badge/systemd-timer-30D475?logo=linux&logoColor=black)](https://systemd.io/)
+[![pytest](https://img.shields.io/badge/tested%20with-pytest-0A9EDC?logo=pytest&logoColor=white)](https://pytest.org/)
+[![Ruff](https://img.shields.io/badge/lint-Ruff-D7FF64?logo=ruff&logoColor=black)](https://github.com/astral-sh/ruff)
 
-<br>
+<br/>
 
-[Quick Start](#-quick-start) · [Architecture](#-architecture) · [LLM Policy](#-daily-llm-policy) · [Deployment](#️-server-deployment) · [Safety](#️-safety-guards) · [Docs](#-documentation)
+[⚡ Quick start](#-quick-start) •
+[🧠 Models](#-model-zoo) •
+[📐 Trading rules](#-trading-rules) •
+[🤖 LLM policy](#-daily-llm-policy) •
+[☁️ Deploy](#️-server-deployment) •
+[🛡️ Safety](#️-safety-guards) •
+[✅ Verification](#-verification) •
+[🏗️ Architecture](#️-architecture) •
+[📅 Timeline](#-development-timeline) •
+[🗺️ Roadmap](#️-roadmap)
 
-<br>
+</div>
 
 > [!WARNING]
-> This project is for research and education. **Profits are not guaranteed and real losses can occur.** Paper trading is the default, and no pre-trained model is included in this repository.
+> This project is for research and education. **Profits are not guaranteed and real losses can occur.**
+> Paper trading is the default, no pre-trained model is included, and a model that fails the
+> validation/test approval gate can never place a live buy.
 
-<br>
+---
 
-## ✨ Features
+## ✨ Highlights
 
-<table>
-<tr>
-<td width="50%" valign="top">
+| | Area | What you get |
+|:-:|---|---|
+| 🧠 | **Model zoo** | LSTM, GRU, TCN and patch-Transformer members, or a **heterogeneous ensemble** of all of them in one ONNX file |
+| ⚖️ | **Fair comparison** | `compare-models` trains every candidate on identical data and splits and ranks them on validation only |
+| 🎯 | **Trading-aware training** | 27 causal features, early stopping on **rank IC**, thresholds chosen by risk-adjusted return |
+| 📐 | **One rule set** | stop-loss, trailing stop, take-profit, minimum hold, cooldown: the same code in backtest, paper and live |
+| 🤖 | **Daily LLM policy** | macro data, central-bank releases and sentiment tune the strategy; code forbids any increase in risk |
+| 🔁 | **Crash-safe execution** | durable order intents, identifier reconciliation, no blind resends, idempotent 5-minute cycles |
+| 🖥️ | **Training dashboard** | presets, live learning curves, backtest equity, smart resume |
+| ☁️ | **Low-cost operation** | train on your PC, run ONNX inference on a free CPU VM with a systemd timer and no open ports |
 
-### 🧠 LSTM Ensemble Forecasting
-- Predicts **30-minute returns** from 5-minute candles of the top markets by trading value
-- 27 causal (no look-ahead) features: short-term to 24-hour returns, volatility, volume, time-of-day and weekday cycles
-- **Attention pooling** + an **ensemble** of independently seeded models
-- Outputs a forecast together with its **uncertainty** (disagreement between models)
+---
 
-</td>
-<td width="50%" valign="top">
+## ⚡ Quick start
 
-### 🤖 Daily LLM Policy
-- Reads macro indicators, central-bank and regulator releases, and market sentiment every day
-- **Automatically tunes** entry threshold, position size, stop-loss / take-profit and holding time
-- Code guarantees the LLM **can never take more risk than the validated limits**
-- Works with Claude or any OpenAI-compatible model
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### 🖥️ Training Dashboard
-- Dark-themed dashboard: presets, explained settings, one-click training
-- **Live learning curves** per ensemble model, progress and time remaining
-- **Backtest equity chart** and a results card grid after each run
-- Smart resume: tells you exactly which setting changed and fixes it in one click
-
-</td>
-<td width="50%" valign="top">
-
-### ☁️ Low-Cost Cloud Operation
-- Train on your own PC, run inference on a **free cloud VM (CPU)**
-- systemd timer decides every 5 minutes and recovers after reboots
-- No open web ports, no withdrawal permission required
-
-</td>
-</tr>
-</table>
-
-<br>
-
-## 🏗 Architecture
-
-```mermaid
-flowchart LR
-    subgraph PC["💻 Training PC (GPU recommended · CPU works)"]
-        direction TB
-        A[Upbit 5-min candles<br/>SQLite] --> B[Feature engineering]
-        B --> C[LSTM ensemble training<br/>PyTorch]
-        C --> D[Backtest · approval gate]
-        D --> E[ONNX export + package]
-    end
-
-    subgraph SRV["☁️ Server (Ubuntu · CPU)"]
-        direction TB
-        F[📊 Macro data · official releases<br/>FRED · Fed · ECB · SEC · BLS] --> G[🤖 LLM<br/>daily 00:20 UTC]
-        G --> H{🛡️ Bounds validation}
-        H --> I[(policy.json)]
-        J[⏱️ Every 5 min] --> K[ONNX inference<br/>forecast + uncertainty]
-        I --> L[Trading decision]
-        K --> L
-        L --> M[(Order ledger<br/>SQLite)]
-    end
-
-    E -- oracle-upload.zip --> K
-    L <--> N[(Upbit API)]
-```
-
-<br>
-
-## 🚀 Quick Start
-
-### 1️⃣ Train — GUI (recommended)
+**1️⃣ Train with the dashboard** (Python and libraries install themselves inside the project folder)
 
 <table>
-<tr><th>Windows</th><th>Linux</th></tr>
+<tr><th>🪟 Windows</th><th>🐧 Linux</th></tr>
 <tr>
 <td>
 
@@ -142,54 +90,118 @@ bash scripts/train.sh gui
 </tr>
 </table>
 
-On first launch, Python and the training libraries are installed automatically inside the project folder. System settings are not touched.
+Pick a preset → adjust settings (hover for explanations) → **▶ Start training** → check the learning curves,
+backtest equity and results. The output is `dist/oracle-upload.zip`. Without a GPU, CPU mode is switched on
+automatically.
 
-| Step | What to do |
-|:---:|---|
-| **1** | Click a preset card: Quick check / Balanced (recommended) / High performance |
-| **2** | Adjust values in each tab if needed (hover a field for its explanation) |
-| **3** | Click **▶ Start training**. Settings are validated and saved automatically |
-| **4** | Watch the **learning curves**; afterwards check the **backtest equity** and **results** tabs |
+**2️⃣ (Optional) Pick the best architecture first**
 
-The output is `dist/oracle-upload.zip`, which you upload to the server. Without a GPU, tick **CPU mode** (the dashboard turns it on automatically when no GPU is found).
+```bash
+upbit-bot compare-models --candidates lstm,gru,tcn,transformer,mixed
+```
 
-**Resuming.** After a stop or crash, **Resume** continues from the last finished epoch and reuses finished ensemble models. You can safely change epochs, ensemble size, strategy, approval and capital settings between runs. If a setting that defines the model changed, the dashboard lists each one (old → new) and offers to restore it and resume, or to start over with the saved data. Old checkpoints are moved to `artifacts/old-checkpoints/`, never deleted.
-
-> [!NOTE]
-> The GUI labels are currently in Korean. The English names above match the buttons in order.
-
-<details>
-<summary><b>⌨️ Train from the command line</b></summary>
-
-<br>
-
-| Task | Windows | Linux |
-|---|---|---|
-| Full training | `TRAIN.cmd` | `bash scripts/train.sh` |
-| Resume | `RESUME.cmd` | `bash scripts/train.sh resume` |
-| HMM comparison | `HMM.cmd` | `bash scripts/train.sh hmm` |
-| Environment check | — | `bash scripts/train.sh check` |
-
-- An interrupted run resumes from the last completed epoch; finished ensemble members are skipped.
-- After changing data or settings, start a fresh run.
-- Back up the existing `artifacts` folder before retraining.
-- To move to another PC, copy **source + `data` + `artifacts`** (not `.venv` or `.tools`).
-
-</details>
-
-### 2️⃣ Deploy
+**3️⃣ Deploy** → paper trading starts automatically
 
 ```text
 Double-click DEPLOY.cmd → enter the server IP and SSH key path
 ```
 
-Upload and installation run automatically, and **paper trading** starts. See [Server Deployment](#️-server-deployment) for details.
+<details>
+<summary>💡 <b>More commands</b> (CLI training, resume, HMM, status)</summary>
 
-<br>
+<br/>
 
-## 🤖 Daily LLM Policy
+| Task | Command |
+|---|---|
+| Download candles | `upbit-bot download` |
+| Full training | `TRAIN.cmd` · `bash scripts/train.sh` · `upbit-bot train` |
+| Resume after a stop or crash | `RESUME.cmd` · `bash scripts/train.sh resume` · `upbit-bot train --resume` |
+| Compare architectures | `upbit-bot compare-models` |
+| HMM comparison | `HMM.cmd` · `bash scripts/train.sh hmm` |
+| Package for the server | `upbit-bot package` |
+| One paper cycle | `upbit-bot run --mode paper --once` |
+| Bot status | `upbit-bot status` |
 
-Once a day, an LLM analyzes the market environment and sets the next day's trading parameters. **The LLM never places orders.** It only proposes numbers, and only values that pass code validation are applied.
+</details>
+
+> [!TIP]
+> **Resuming is safe.** Epochs, ensemble size, strategy, gate and capital can change between runs. If a setting
+> that defines the weights changed, the dashboard lists every change (old → new) and offers to restore it or
+> start fresh. Old checkpoints are moved to `artifacts/old-checkpoints/`, never deleted.
+
+---
+
+## 🧠 Model zoo
+
+Every member reads the same input (96 five-minute bars × 27 features + market one-hot) and predicts the
+30-minute log return from the next bar's open. The ensemble outputs a **mean forecast** and an
+**uncertainty** (member disagreement), so the server needs no PyTorch and no code change for any candidate.
+
+| | Candidate | Structure | Strength |
+|:-:|---|---|---|
+| 🔁 | `lstm` | 2-layer LSTM + attention pooling | proven baseline |
+| ⚡ | `gru` | GRU + attention pooling | fewer parameters, less overfitting |
+| 🌊 | `tcn` | dilated causal convolutions (1–32), 253-bar receptive field | local multi-scale patterns: spikes, breakouts |
+| 🔭 | `transformer` | 4-bar patches (96 → 24 tokens), pre-norm self-attention | long-range relations across the window |
+| 🧬 | `mixed` | e.g. `["lstm", "tcn", "transformer"]` | diverse errors → stronger averaging and uncertainty |
+
+```toml
+[model]
+architecture = ["lstm", "tcn", "transformer"]   # or a single name
+ensemble = 3                                     # members cycle through the list
+```
+
+> [!NOTE]
+> On 5-minute crypto returns, **deeper is not automatically better**: the signal-to-noise ratio is tiny and
+> extra capacity overfits first. The project favours architectural diversity and like-for-like comparison.
+> `compare-models` ranks on validation Sharpe, then validation rank IC; the test period is reported but never
+> used for selection.
+
+<details>
+<summary>🔬 <b>Training & evaluation design</b></summary>
+
+<br/>
+
+| Item | Details |
+|---|---|
+| Markets | Top N KRW markets by 24 h value; stablecoins and markets without `minimum_days` of history excluded |
+| Features | 27 causal rolling features: 1–288-bar returns, volatility, Parkinson range, RSI, MA gaps, volume z-scores, day/week cycles |
+| Target | 30-minute log return, entry at the next candle's open |
+| Training | AdamW, warmup + cosine LR, Huber loss, mixed precision on GPU, OOM-safe batch halving |
+| Epoch selection | validation **rank IC** (`early_stop_metric = "ic"`); MAE tends to reward forecasts collapsing to 0 |
+| Splits | train / 90-day validation / 90-day test, label windows purged at boundaries |
+| Normalization | training-period statistics only |
+| Threshold | chosen on validation by Sharpe (ties: profit factor) |
+| Cost model | 0.05 % fee + 5 bps slippage per side |
+| Export | ONNX with PyTorch ↔ ONNX parity checked at batch 1 and 5 |
+
+A Hidden Markov Model comparison under identical conditions is in [docs/HMM.md](docs/HMM.md).
+
+</details>
+
+---
+
+## 📐 Trading rules
+
+One module (`strategy.py`) decides for the backtest, paper and live trading, so what was validated is what runs.
+
+| | Rule | Behaviour |
+|:-:|---|---|
+| 🟢 | **Entry** | forecast − uncertainty penalty ≥ threshold; strongest signals are filled first |
+| 🔴 | **Stop-loss** | close ≤ entry × (1 − stop) |
+| 🪜 | **Trailing stop** | after a gain, close ≤ highest close × (1 − trailing) |
+| 💰 | **Take-profit** | close ≥ entry × (1 + take-profit) |
+| ⏳ | **Max hold** | position closed after `max_hold_bars` |
+| 🧘 | **Minimum hold** | forecast-driven exits wait `min_hold_bars`; risk exits never wait |
+| 🧊 | **Cooldown** | no re-entry for `cooldown_bars` after a stop or trailing exit |
+| 🧯 | **Loss halts** | daily loss limit and cumulative drawdown liquidate and block buys |
+
+---
+
+## 🤖 Daily LLM policy
+
+Once a day an LLM reads the market environment and proposes the next day's parameters.
+**It never places orders**; only values that pass code validation are applied.
 
 <table>
 <tr>
@@ -199,10 +211,10 @@ Once a day, an LLM analyzes the market environment and sets the next day's tradi
 
 | Category | Sources |
 |---|---|
-| Rates & inflation | Fed funds rate, US 2y/10y Treasuries, breakeven inflation |
-| Risk gauges | VIX, high-yield spread, dollar index, USD/KRW |
-| Official releases | Fed · ECB · SEC · BLS press releases |
-| Crypto | Fear & Greed index, BTC dominance |
+| Rates & inflation | Fed funds, US 2y/10y, breakevens |
+| Risk gauges | VIX, HY spread, DXY, USD/KRW |
+| Official releases | Fed · ECB · SEC · BLS |
+| Crypto | Fear & Greed, BTC dominance |
 | Traded markets | Upbit daily trend & volatility |
 
 </td>
@@ -214,9 +226,9 @@ Once a day, an LLM analyzes the market environment and sets the next day's tradi
 |---|---|
 | New entries | on / off |
 | Entry threshold | baseline × 0.8 – 3.0 |
-| Position size · total exposure | **≤ baseline only** |
+| Position size · exposure | **≤ baseline only** |
 | Stop-loss · daily loss limit | **≤ baseline only** |
-| Take-profit · holding time | baseline × 0.5 – 1.5 / 2.0 |
+| Take-profit · holding time | × 0.5 – 1.5 / 2.0 |
 | Uncertainty penalty | 0 – 2 |
 
 </td>
@@ -225,26 +237,23 @@ Once a day, an LLM analyzes the market environment and sets the next day's tradi
 
 ```bash
 sudo bash /opt/upbit-lstm/current/deploy/configure-llm.sh        # store API key + dry run
-sudo bash /opt/upbit-lstm/current/deploy/botctl.sh policy-show   # show today's parameters
+sudo bash /opt/upbit-lstm/current/deploy/botctl.sh policy-show   # today's parameters
 ```
 
 > [!TIP]
-> The LLM is optional. Without it, the bot uses the baseline values validated by training and backtesting. If the LLM call or data collection fails, trading continues and falls back to the baseline once the policy expires.
+> The LLM is optional. Without it the bot uses the validated baseline; if a call fails, trading continues and
+> falls back to the baseline when the policy expires. Details: 📘 [docs/LLM_POLICY.md](docs/LLM_POLICY.md).
 
-See 📘 [LLM policy documentation](docs/LLM_POLICY.md) for details.
+---
 
-<br>
+## ☁️ Server deployment
 
-## ☁️ Server Deployment
-
-You need an **Ubuntu 24.04** (ARM64 · AMD64) server. No GPU is required; an Oracle Cloud Always Free instance is enough.
+Any **Ubuntu 24.04** (ARM64 · AMD64) server works; no GPU needed. An Oracle Cloud Always Free instance is enough.
 
 <details open>
-<summary><b>① Install · paper trading</b></summary>
+<summary>① <b>Install · paper trading</b></summary>
 
-<br>
-
-If you don't use `DEPLOY.cmd`, upload the ZIP to the server and run:
+<br/>
 
 ```bash
 sudo apt-get update && sudo apt-get install -y unzip
@@ -252,7 +261,7 @@ mkdir -p ~/upbit-release && unzip oracle-upload.zip -d ~/upbit-release
 cd ~/upbit-release && sudo bash deploy/install.sh
 ```
 
-It runs 15 seconds after every 5-minute boundary. Check status with:
+Runs 15 seconds after every 5-minute boundary:
 
 ```bash
 sudo journalctl -u upbit-lstm.service -f
@@ -262,19 +271,19 @@ sudo bash /opt/upbit-lstm/current/deploy/botctl.sh status
 </details>
 
 <details>
-<summary><b>② Switch to live trading</b></summary>
+<summary>② <b>Switch to live trading</b></summary>
 
-<br>
+<br/>
 
-1. Create an [Upbit Open API](https://upbit.com/mypage/open_api_management) key with **view assets · view orders · place orders** permissions. Withdrawal permission is not needed. Add the server IP to the allowlist.
-2. Set trading capital (default 100,000 KRW) before training, in `config.toml` or the GUI. Live trading uses the same value.
-3. If the report passes the approval gate, run:
+1. Create an [Upbit Open API](https://upbit.com/mypage/open_api_management) key with **view assets · view orders · place orders**. No withdrawal permission. Allowlist the server IP.
+2. Set trading capital (default 100,000 KRW) **before training**; live trading must use the same value.
+3. If the report passes the approval gate:
 
 ```bash
 sudo bash /opt/upbit-lstm/current/deploy/configure-live.sh
 ```
 
-Coins you already hold are never sold automatically. To include them, register an exact quantity:
+Coins you already hold are never sold automatically. To hand an exact quantity to the bot:
 
 ```bash
 sudo bash /opt/upbit-lstm/current/deploy/botctl.sh adopt --market KRW-BTC --quantity 0.0001 --confirm
@@ -283,93 +292,73 @@ sudo bash /opt/upbit-lstm/current/deploy/botctl.sh adopt --market KRW-BTC --quan
 </details>
 
 <details>
-<summary><b>③ Emergency stop</b></summary>
+<summary>③ <b>Emergency stop</b></summary>
 
-<br>
+<br/>
 
 ```bash
-sudo touch /var/lib/upbit-lstm/STOP   # stop all new orders
+sudo touch /var/lib/upbit-lstm/STOP   # stop all orders
 sudo bash /opt/upbit-lstm/current/deploy/botctl.sh policy-set --set allow_new_entries=false --confirm   # stop buying only
 ```
 
-For recovery steps, see the [operations guide](docs/OPERATIONS.md).
+Recovery steps: [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 </details>
 
-<br>
+---
 
-## 🛡️ Safety Guards
+## 🛡️ Safety guards
 
-| Area | Protection |
-|---|---|
-| **Live approval** | Live buys are allowed only if both validation and test periods meet minimum trades, positive return and Sharpe, profit factor ≥ 1.05 and drawdown ≤ 10% |
-| **Model freshness** | New live buys are blocked when training data is more than 30 days old |
-| **Loss limits** | Stop-loss · take-profit · max holding time · daily loss limit · cumulative drawdown limit (manual reset) |
-| **LLM control** | Cannot increase risk, daily change is capped, falls back to baseline on expiry, re-validated every 5 minutes |
-| **Order integrity** | Intent is recorded before each order with a unique identifier; uncertain responses are reconciled by lookup, never resent |
-| **Market state** | Orders stop on stale candles or order books, excessive spreads, or balance mismatches |
-| **Secrets** | Upbit and LLM keys are stored separately; data, keys and state are never committed to Git |
-| **Model integrity** | ONNX hash, feature order and PyTorch↔ONNX numerical parity are verified |
+| | Area | Protection |
+|:-:|---|---|
+| ✅ | **Live approval** | validation and test must meet minimum trades, positive return and Sharpe, profit factor ≥ 1.05, drawdown ≤ 10 %, and 2 of 3 validation blocks profitable |
+| 🗓️ | **Model freshness** | live buys blocked when training data is more than 30 days old |
+| 🧯 | **Loss limits** | stop · trailing · take-profit · max hold · daily loss · cumulative drawdown (manual reset) |
+| 🚪 | **Protective exits** | stop and halt sells tolerate 4× the entry spread limit, so a thin book cannot trap a position |
+| 📭 | **Missing candles** | a market without its latest candle only skips entries; stops on held positions keep working |
+| 🤖 | **LLM control** | cannot increase risk, daily step capped, re-validated every cycle, baseline on expiry |
+| 🧾 | **Order integrity** | intent recorded before each order; uncertain outcomes reconciled by identifier, never resent |
+| 📉 | **Market state** | stale candles or books, wide spreads or balance mismatches stop orders |
+| 🔑 | **Secrets** | Upbit and LLM keys stored separately; data, keys and state never committed |
+| 🔒 | **Model integrity** | ONNX hash, feature order and PyTorch ↔ ONNX parity verified |
 
 > [!IMPORTANT]
-> Loss limits are program checks evaluated every 5 minutes, not stop orders resting on the exchange. Sharp moves or server outages can push real losses beyond the limits.
-
-<br>
-
-## 🔬 Model Details
+> Loss limits are program checks evaluated every 5 minutes, not resting exchange orders. Sharp moves or server
+> outages can push real losses beyond the limits.
 
 <details>
-<summary><b>Training & evaluation design</b></summary>
+<summary>⚠️ <b>Known limitations</b></summary>
 
-<br>
-
-| Item | Details |
-|---|---|
-| Markets | Top N KRW markets by trading value at first download (default 5), then fixed |
-| Input | Last 96 five-minute candles (8 hours) × 27 features + market one-hot |
-| Target | 30-minute log return, assuming entry at the next candle's open |
-| Model | 2-layer LSTM + attention pooling, ensemble of 3 (default), Huber loss |
-| Training | AdamW, warmup + cosine learning rate, early stopping, mixed precision (GPU) |
-| Splits | Train / 90-day validation / 90-day test, label windows purged at boundaries |
-| Normalization | Statistics from the training period only |
-| Entry threshold | Chosen on validation only; the test period is used only for the final verdict |
-| Cost model | 0.05% fee + 5 bps slippage per side |
-| Inference | ONNX Runtime on CPU |
-
-A Hidden Markov Model comparison under identical conditions is also available. See the [HMM documentation](docs/HMM.md).
-
-</details>
-
-<details>
-<summary><b>⚠️ Known limitations</b></summary>
-
-<br>
+<br/>
 
 - Using today's top markets introduces **survivorship bias**.
 - Historical order books and market impact cannot be reproduced; next-open fills are an approximation.
-- Repeatedly tuning settings against the same test period invalidates it as an unseen test.
+- Repeatedly tuning against the same test period invalidates it as an unseen test.
 - Parameter combinations chosen by the LLM are not backtested, which is why only risk-reducing changes are allowed.
 - Free cloud VMs do not guarantee uptime.
 
 </details>
 
-<br>
+---
 
-## 📚 Documentation
+## ✅ Verification
 
-The detailed documents are currently written in Korean.
+<details>
+<summary>🧪 <b>Show what the test suite covers</b></summary>
 
-| Document | Contents |
-|---|---|
-| 📘 [LLM_POLICY.md](docs/LLM_POLICY.md) | LLM policy: data sources, bounds, operating commands |
-| 🏛️ [DESIGN.md](docs/DESIGN.md) | Data, training and order design with official references |
-| 🔧 [OPERATIONS.md](docs/OPERATIONS.md) | Operations, failure recovery, retraining, backups |
-| 📊 [HMM.md](docs/HMM.md) | HMM comparison research |
-| ✅ [VERIFICATION.md](docs/VERIFICATION.md) | Verification status |
+<br/>
 
-<br>
+- **Features:** full-history and short server-window features match; no look-ahead
+- **Backtest:** next-open fills with fees, no fills on no-trade bars, strongest-signal ordering, trailing-stop exits
+- **Rules:** stop beats minimum hold, cooldown after stops, legacy bundles without new keys behave as before
+- **Execution:** paper never calls private APIs, same-bar idempotency, STOP file, loss-limit latching, POST timeout + restart without duplicates, partial-fill reconciliation, wide-spread skips, dust re-entry, protective sells
+- **Inference:** paginated API candles, missing latest candle degrades to one market
+- **Models:** every architecture trains, exports to ONNX within 0.005 bps and stays causal; end-to-end `compare-models`
+- **State:** automatic migration of older ledgers
+- **Policy:** clamping, step limits, expiry, prompt-injection-safe inputs
+- **Resume:** safe edits resume, real changes are explained
 
-## 🧑‍💻 Development
+</details>
 
 ```bash
 python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
@@ -377,33 +366,110 @@ python -m pip install -r requirements-runtime.txt onnx -e '.[dev,hmm]'
 pytest -q && ruff check .
 ```
 
-<details>
-<summary><b>📁 Project structure</b></summary>
+---
 
-<br>
+## 🏗️ Architecture
+
+```mermaid
+flowchart LR
+    subgraph PC["💻 Training PC (GPU recommended · CPU works)"]
+        direction TB
+        A[Upbit 5-min candles<br/>SQLite] --> B[27 causal features]
+        B --> C[Ensemble training<br/>LSTM · GRU · TCN · Transformer]
+        C --> D[Backtest · approval gate]
+        D --> E[ONNX export + package]
+    end
+
+    subgraph SRV["☁️ Server (Ubuntu · CPU)"]
+        direction TB
+        F[📊 Macro data · official releases] --> G[🤖 LLM<br/>daily 00:20 UTC]
+        G --> H{🛡️ Bounds validation}
+        H --> I[(policy.json)]
+        J[⏱️ Every 5 min] --> K[ONNX inference<br/>forecast + uncertainty]
+        I --> L[Shared trading rules]
+        K --> L
+        L --> M[(Order ledger<br/>SQLite)]
+    end
+
+    E -- oracle-upload.zip --> K
+    L <--> N[(Upbit API)]
+```
 
 ```text
 src/upbit_bot/
-├── data.py · features.py      # data collection · causal features
-├── model.py · train.py        # LSTM ensemble training · ONNX export
-├── backtest.py · strategy.py  # backtest · shared trading rules
-├── runtime.py · state.py      # 5-minute inference · order ledger
-├── macro.py · llm_policy.py   # macro data · LLM call
-├── policy.py                  # parameter bounds validation
-├── gui.py                     # training GUI
-└── hmm_model.py · hmm_research.py
-deploy/                        # systemd units · install · key setup scripts
-scripts/                       # Windows · Linux training launchers
+├── data.py          🕯️ candle download, universe selection, gap handling
+├── features.py      🧮 27 causal rolling features, splits with purging
+├── model.py         🧠 LSTM · GRU · TCN · Transformer members, ensemble, ONNX export
+├── model_names.py   🏷️ architecture names (no torch on the server)
+├── train.py         🏋️ training, rank-IC early stopping, threshold search, report
+├── compare.py       ⚖️ compare-models: same data, validation-only ranking
+├── backtest.py      📊 portfolio simulation with fees and slippage
+├── strategy.py      📐 shared entry / exit rules
+├── runtime.py       ⏱️ 5-minute inference, risk checks, orders, reconciliation
+├── state.py         🧾 durable intents and bot-owned ledger (SQLite)
+├── api.py           🔌 Upbit REST client, JWT auth, GET-only retries
+├── policy.py        🛡️ LLM / manual parameter bounds
+├── llm_policy.py    🤖 Claude / OpenAI-compatible daily policy
+├── macro.py         🌍 FRED, central-bank and regulator feeds, sentiment
+├── hmm_model.py     🎲 HMM research model
+├── resume.py        🔁 checkpoint identity and change explanations
+└── gui.py           🖥️ training dashboard
+deploy/              ☁️ systemd units, install, live and LLM setup
+scripts/             🚀 Windows and Linux launchers
 ```
 
-</details>
+---
 
-<br>
+## 📅 Development timeline
+
+```mermaid
+timeline
+    title Upbit LSTM Trader
+    2026-11-07 : 🖥️ Training dashboard
+               : Smart resume with change explanations
+    2026-11-17 : 🛡️ Hardened runtime
+               : Trailing stop · min hold · cooldown
+               : 🧠 Model zoo + compare-models
+```
+
+| | Date | Milestone | What was added |
+|:-:|---|---|---|
+| 🖥️ | **2026-11-07** | **Dashboard** | dark training dashboard with presets, live learning curves, backtest equity, and a resume flow that names every changed setting |
+| 🛡️ | **2026-11-17** | **Hardened runtime** | missing-candle and wide-spread failure modes fixed, dust re-entry, strongest-signal ordering, trailing stop, minimum hold, cooldown, stablecoin-free universe |
+| 🧠 | **2026-11-17** | **Model zoo** | GRU, TCN and patch-Transformer members, heterogeneous ensembles, rank-IC early stopping, `compare-models` |
+
+---
+
+## 🗺️ Roadmap
+
+- [ ] 🧾 Limit-order entries at the best bid with timeout cancel, and a fill-probability-aware backtest
+- [ ] ⏱️ Longer forecast horizons (60 min+) so the edge clears round-trip costs
+- [ ] 🔄 Walk-forward retraining instead of a single train / validation / test split
+- [ ] 🗂️ Point-in-time universe to remove survivorship bias
+- [ ] 📊 Paper-vs-backtest drift report on the server
+
+---
+
+## 📚 Documentation
+
+> Detailed documents are written in Korean.
+
+| Document | Contents |
+|---|---|
+| 📘 [LLM_POLICY.md](docs/LLM_POLICY.md) | data sources, bounds, operating commands |
+| 🏛️ [DESIGN.md](docs/DESIGN.md) | data, training, model zoo and order design with official references |
+| 🔧 [OPERATIONS.md](docs/OPERATIONS.md) | operations, failure recovery, retraining, backups |
+| 📊 [HMM.md](docs/HMM.md) | HMM comparison research |
+| ✅ [VERIFICATION.md](docs/VERIFICATION.md) | verification status |
 
 <div align="center">
 
-**⚠️ You are solely responsible for your trading decisions ⚠️**
+<br/>
 
-<sub>Built with PyTorch · ONNX Runtime · Claude · Upbit Open API</sub>
+**⚠️ You are solely responsible for your trading decisions. ⚠️**
+
+⭐ **If this project helps your research, consider giving it a star!** ⭐
+
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:3A506B,50:1C2541,100:0B132B&height=120&section=footer" width="100%" alt=""/>
 
 </div>
